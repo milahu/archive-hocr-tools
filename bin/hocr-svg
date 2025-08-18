@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import os
 import sys
 import base64
 import argparse
+import mimetypes
 
 from hocr.parse import hocr_page_iterator
 from hocr.parse import hocr_page_to_word_data
@@ -12,40 +14,94 @@ from hocr.text import hocr_word_data_bbox
 from PIL import Image
 
 
+hocrfile_extensions = ("hocr", "html")
+
+
 # debug
 import json
 def j(o):
     return json.dumps(o, indent=2)
 
 
-def process_file(input_file, reverse):
-    if not reverse:
-        return process_file_hocr2svg(input_file)
-    return process_file_svg2hocr(input_file)
+def process_files(infiles, reverse):
+    if reverse:
+        return process_files_svg2hocr(infiles)
+    return process_files_hocr2svg(infiles)
 
 
-def process_file_hocr2svg(hocrfile):
+def is_image_path(path):
+    _type = mimetypes.guess_file_type(path)[0]
+    return _type and _type.startswith("image/")
+
+
+def process_files_hocr2svg(infiles):
+    hocrfiles = []
+    imgfiles = []
+    for filepath in infiles:
+        ext = os.path.splitext(filepath)[1].lower().lstrip(".")
+        if ext in hocrfile_extensions:
+            hocrfiles.append(filepath)
+        elif is_image_path(filepath):
+            imgfiles.append(filepath)
+        else:
+            raise ValueError(f"unsupported file extension {ext!r} of file {filepath!r}")
+
+    if imgfiles:
+        assert len(imgfiles) == len(hocrfiles)
+
     page_count = 0
 
     out = sys.stdout
 
     page_list = list()
+    page_bbox_list = list()
     page_size_list = list()
     max_page_width = 0
     sum_page_height = 0
     page_padding_right = 10
     page_padding_bottom = 10
 
-    # get page bbox of all pages
-    for raw_page in hocr_page_iterator(hocrfile):
-        page = hocr_page_to_word_data(raw_page)
-        # print("page", j(page))
+    # no! hocr_page_to_word_data returns empty list for all pages
+    # seems like page_elem is a mutable reference
+    """
+    page_elem_list = []
+    for hocrfile in hocrfiles:
+        page_elem_chunk = list(hocr_page_iterator(hocrfile))
+        page_elem_list += page_elem_chunk
+    page_image_path = None
+    for page_idx, page_elem in enumerate(page_elem_list):
+        page = hocr_page_to_word_data(page_elem)
         page_list.append(page)
-        page_image_path = "001.jpg" # FIXME get image paths from sys.argv
-        im = Image.open(page_image_path)
-        page_size = im.size
-        page_size_list.append(page_size)
-        page_w, page_h = page_size
+        print("page", j(page), file=sys.stderr)
+    """
+
+    for hocrfile in hocrfiles:
+        print("hocrfile", hocrfile, file=sys.stderr)
+        num_pages = 0
+        for page_elem in hocr_page_iterator(hocrfile):
+            # print("page_elem", repr(page_elem), file=sys.stderr)
+            page = hocr_page_to_word_data(page_elem)
+            page_list.append(page)
+            num_pages += 1
+        if imgfiles and num_pages != 1:
+            raise ValueError(f"bad page count in hocr file {hocrfile!r}: expected 1, actual {num_pages}")
+
+    # get page bbox of all pages
+    page_image_path = None
+    for page_idx, page in enumerate(page_list):
+        # print("page", j(page), file=sys.stderr)
+        if imgfiles:
+            page_image_path = imgfiles[page_idx]
+        if page_image_path:
+            im = Image.open(page_image_path)
+            page_size = im.size
+            page_size_list.append(page_size)
+            page_w, page_h = page_size
+        else:
+            page_bbox = hocr_word_data_bbox(page)
+            page_bbox_list.append(page_bbox)
+            page_w = page_bbox[2] if page_bbox else 0 # x2
+            page_h = page_bbox[3] if page_bbox else 0 # y2
         max_page_width = max(max_page_width, page_w)
         sum_page_height += page_h
 
@@ -61,30 +117,44 @@ def process_file_hocr2svg(hocrfile):
         f' xmlns:xlink="http://www.w3.org/1999/xlink"' +
         f'>\n'
     )
-    out.write(' <style>')
+    out.write(' <style>\n')
     # https://stackoverflow.com/questions/31655360/svg-text-anchor-top-left
     # no, this breaks inkscape text editing...
-    # out.write('  svg { dominant-baseline: hanging; }')
-    out.write('  svg { dominant-baseline: mathematical; }')
-    out.write(' </style>')
+    # out.write('  svg { dominant-baseline: hanging; }\n')
+    out.write('  svg { dominant-baseline: mathematical; }\n')
+    out.write(' </style>\n')
     page_offset_y = 0
+    page_image_path = None
+    out.write(f' <!-- {len(page_list)} pages -->\n')
     for page_idx, page in enumerate(page_list):
+        if imgfiles:
+            page_image_path = imgfiles[page_idx]
+        if page_image_path:
+            page_size = page_size_list[page_idx]
+            page_w, page_h = page_size
+        else:
+            page_size = page_bbox_list[page_idx]
+            if page_size is None:
+                out.write(f'  <!-- empty page {page_idx + 1} -->\n')
+                continue
+            page_w = page_bbox[2] # x2
+            page_h = page_bbox[3] # y2
         _id = f"p{page_idx + 1}"
-        out.write(f' <g id="{_id}" class="page">\n')
-        page_size = page_size_list[page_idx]
-        page_w, page_h = page_size
-        out.write(f'  <rect class="bbox" x="0" y="{page_offset_y}" width="{page_w}" height="{page_h}" fill="none" stroke="#000" stroke-width=".26458"/>\n')
-        page_image_path = "001.jpg" # FIXME get image paths from sys.argv
-        with open(page_image_path, "rb") as f:
-            page_image_base64 = base64.b64encode(f.read()).decode("ascii")
-        # TODO set width + height?
-        out.write(f'  <image opacity="0.25" x="0" y="{page_offset_y}" preserveAspectRatio="none" xlink:href="data:image/jpeg;base64,{page_image_base64}"/>\n')
+        out.write(f' <g id="{_id}" class="page" transform="translate(0, {page_offset_y})">\n')
+        out.write(f'  <rect class="bbox" x="0" y="0" width="{page_w}" height="{page_h}" fill="none" stroke="#000" stroke-width=".26458"/>\n')
+        if page_image_path:
+            with open(page_image_path, "rb") as f:
+                page_image_base64 = base64.b64encode(f.read()).decode("ascii")
+            out.write(f'  <image opacity="0.25" x="0" y="0" width="{page_w}" height="{page_h}" preserveAspectRatio="none" xlink:href="data:image/jpeg;base64,{page_image_base64}"/>\n')
+        out.write(f'  <!-- {len(page)} paragraphs -->\n')
         for paragraph_idx, paragraph in enumerate(page):
             _id = f"p{page_idx + 1}-p{paragraph_idx + 1}"
             out.write(f'  <g id="{_id}" class="par">\n')
+            out.write(f'  <!-- {len(paragraph["lines"])} lines -->\n')
             for line_idx, line in enumerate(paragraph["lines"]):
                 _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l{line_idx + 1}"
                 out.write(f'   <g id="{_id}" class="line">\n')
+                out.write(f'   <!-- {len(line["words"])} words -->\n')
                 for word_idx, word in enumerate(line["words"]):
                     _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l{line_idx + 1}-w{word_idx + 1}"
                     out.write(f'    <g id="{_id}" class="word">\n')
@@ -99,7 +169,8 @@ def process_file_hocr2svg(hocrfile):
                     text_y = y1 + (h / 2) # this requires "dominant-baseline: mathematical"
                     text_size = h # this can overflow too-narrow bboxes
                     text_size = w / len(text) * 1.5
-                    out.write(f'     <text x="{x1}" y="{text_y}" fill="#000" font-size="{text_size}px" xml:space="preserve">{text}</text>\n')
+                    text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    out.write(f'     <text x="{x1}" y="{text_y}" fill="#000" font-size="{text_size}px" xml:space="preserve">{text_html}</text>\n')
                     out.write('    </g>\n') # word
                 out.write('   </g>\n') # line
             out.write('  </g>\n') # par
@@ -108,18 +179,24 @@ def process_file_hocr2svg(hocrfile):
     out.write('</svg>\n')
 
 
-def process_file_svg2hocr(svgfile):
-    raise "TODO process_file_svg2hocr"
+def process_files_svg2hocr(svgfiles):
+    raise "TODO process_files_svg2hocr"
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='hOCR to plaintext')
     parser.add_argument(
-        '-f',
-        '--infile',
-        help='Filename to read',
-        type=str,
-        required=True,
+        'infiles',
+        nargs='+',
+        help=' '.join([
+            'Filenames to read.',
+            'Either a list of hocr files:',
+            '1.hocr 2.hocr 3.hocr.',
+            'Or a list of hocr and image files:',
+            '1.hocr 1.jpg 2.hocr 2.jpg 3.hocr 3.jpg.',
+            'Or in reverse mode, a list of svg files:',
+            '1.svg 2.svg 3.svg',
+        ]),
     )
     parser.add_argument(
         '-r',
@@ -130,4 +207,4 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    process_file(args.infile, args.reverse)
+    process_files(args.infiles, args.reverse)
