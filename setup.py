@@ -6,6 +6,9 @@ ver_path = convert_path('hocr/version.py')
 with open(ver_path) as ver_file:
     exec(ver_file.read(), main_ns)
 
+with open('requirements.txt') as f:
+    install_requires = f.read().splitlines()
+
 version = main_ns['__version__']
 setup(name='archive-hocr-tools',
       version=version,
@@ -34,7 +37,7 @@ setup(name='archive-hocr-tools',
       ],
       python_requires='>=3.6',
       include_package_data=True,
-      install_requires=[],
+      install_requires=install_requires,
       extras_require={
           'daisy': ['archive-ocr-tools==1.0.4', 'ebooklib==0.17.1'],
           'epub': ['ebooklib==0.17.1', 'internetarchive-deriver-module', 'archive-ocr-tools==1.0.4'],
