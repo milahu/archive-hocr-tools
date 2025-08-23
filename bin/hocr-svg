@@ -35,6 +35,42 @@ def is_image_path(path):
 
 
 def process_files_hocr2svg(infiles):
+    # https://pillow.readthedocs.io/en/stable/reference/ImageFont.html
+    # https://stackoverflow.com/questions/43828955/measuring-width-of-text-python-pil
+    from PIL import Image, ImageFont, ImageDraw
+    image = Image.new('RGBA', (400, 400), (0, 255, 0, 255))
+    draw = ImageDraw.Draw(image)
+    if 0:
+        # use a bitmap font
+        font = ImageFont.load("arial.pil")
+        draw.text((10, 10), "hello", font=font)
+    if 0:
+        # use a truetype font
+        font = ImageFont.truetype("arial.ttf", 15)
+        draw.text((10, 25), "world", font=font)
+    # font = ImageFont.load("DejaVuSans.ttf") # FileNotFoundError
+    # https://stackoverflow.com/a/48381516/10440128
+    import fontconfig
+    # find a font file
+    font_path = None
+    for path in fontconfig.query(family='DejaVuSans', lang='en'):
+        if os.path.basename(path) == "DejaVuSans.ttf":
+            font_path = path
+            break
+    print("font_path", repr(font_path), file=sys.stderr)
+    # use large size for higher precision
+    # bbox are int values
+    font = ImageFont.truetype(font_path, size=100)
+    # width, height = draw.textsize(text, font=font) # deprecated
+    if 0:
+        text = "asdf" # (0, 2, 22, 10)
+        text = "asdfasdf" # bbox (0, 2, 43, 10)
+        (left, top, right, bottom) = draw.textbbox((0, 0), text, font=font)
+        # print("bbox", (left, top, right, bottom))
+        width, height = (right - left), (bottom - top)
+        print("width, height", (width, height))
+        sys.exit()
+
     hocrfiles = []
     imgfiles = []
     for filepath in infiles:
@@ -60,6 +96,8 @@ def process_files_hocr2svg(infiles):
     sum_page_height = 0
     page_padding_right = 10
     page_padding_bottom = 10
+    # no. text_z += 1 # z="..." requires svg 2
+    # text_z = 0 # set z-order to force inkscape to show "layers and objects" in order
 
     # no! hocr_page_to_word_data returns empty list for all pages
     # seems like page_elem is a mutable reference
@@ -115,17 +153,27 @@ def process_files_hocr2svg(infiles):
         f' xml:space="preserve"' +
         f' xmlns="http://www.w3.org/2000/svg"' +
         f' xmlns:xlink="http://www.w3.org/1999/xlink"' +
+        f' xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"' +
         f'>\n'
     )
     out.write(' <style>\n')
     # https://stackoverflow.com/questions/31655360/svg-text-anchor-top-left
     # no, this breaks inkscape text editing...
-    # out.write('  svg { dominant-baseline: hanging; }\n')
-    out.write('  svg { dominant-baseline: mathematical; }\n')
+    # https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/dominant-baseline
+    # out.write('  svg { dominant-baseline: hanging; }\n') # works better in chrome
+    out.write('  svg { dominant-baseline: mathematical; }\n') # works better in inkscape
+    # out.write('  svg { dominant-baseline: middle; }\n')
+    # out.write('  svg { dominant-baseline: central; }\n')
     out.write(' </style>\n')
     page_offset_y = 0
     page_image_path = None
     out.write(f' <!-- {len(page_list)} pages -->\n')
+    svg_list = [] # later: reverse order to fix order in inkscape "layers and objects" (z-index...)
+    # svg groups are bad for inkscape because they block direct access to text nodes
+    svg_groups = False # write svg groups
+    # bbox rects are bad because they double the work
+    # text nodes alone should store both content and positions
+    svg_rects = False # write bboxes as svg rects
     for page_idx, page in enumerate(page_list):
         if imgfiles:
             page_image_path = imgfiles[page_idx]
@@ -135,47 +183,63 @@ def process_files_hocr2svg(infiles):
         else:
             page_size = page_bbox_list[page_idx]
             if page_size is None:
-                out.write(f'  <!-- empty page {page_idx + 1} -->\n')
+                svg_list.append(f'  <!-- empty page {page_idx + 1} -->\n')
                 continue
             page_w = page_bbox[2] # x2
             page_h = page_bbox[3] # y2
         _id = f"p{page_idx + 1}"
-        out.write(f' <g id="{_id}" class="page" transform="translate(0, {page_offset_y})">\n')
-        out.write(f'  <rect class="bbox" x="0" y="0" width="{page_w}" height="{page_h}" fill="none" stroke="#000" stroke-width=".26458"/>\n')
+        if svg_groups: svg_list.append(f' <g id="{_id}" class="page" transform="translate(0, {page_offset_y})">\n')
+        if svg_rects: svg_list.append(f'  <rect class="bbox" x="0" y="0" width="{page_w}" height="{page_h}" fill="none" stroke="#000" stroke-width=".26458"/>\n')
         if page_image_path:
             with open(page_image_path, "rb") as f:
                 page_image_base64 = base64.b64encode(f.read()).decode("ascii")
             out.write(f'  <image opacity="0.25" x="0" y="0" width="{page_w}" height="{page_h}" preserveAspectRatio="none" xlink:href="data:image/jpeg;base64,{page_image_base64}"/>\n')
-        out.write(f'  <!-- {len(page)} paragraphs -->\n')
+        svg_list.append(f'  <!-- {len(page)} paragraphs -->\n')
         for paragraph_idx, paragraph in enumerate(page):
             _id = f"p{page_idx + 1}-p{paragraph_idx + 1}"
-            out.write(f'  <g id="{_id}" class="par">\n')
-            out.write(f'  <!-- {len(paragraph["lines"])} lines -->\n')
+            if svg_groups: svg_list.append(f'  <g id="{_id}" class="par">\n')
+            svg_list.append(f'  <!-- {len(paragraph["lines"])} lines -->\n')
             for line_idx, line in enumerate(paragraph["lines"]):
                 _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l{line_idx + 1}"
-                out.write(f'   <g id="{_id}" class="line">\n')
-                out.write(f'   <!-- {len(line["words"])} words -->\n')
+                if svg_groups: svg_list.append(f'   <g id="{_id}" class="line">\n')
+                svg_list.append(f'   <!-- {len(line["words"])} words -->\n')
                 for word_idx, word in enumerate(line["words"]):
                     _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l{line_idx + 1}-w{word_idx + 1}"
-                    out.write(f'    <g id="{_id}" class="word">\n')
+                    if svg_groups: svg_list.append(f'    <g id="{_id}" class="word">\n')
                     x1, y1, x2, y2 = word["bbox"]
                     w = x2 - x1
                     h = y2 - y1
                     s = h / 10 # stroke width
                     text = word["text"]
-                    out.write(f'     <rect class="bbox" x="{x1}" y="{y1}" width="{w}" height="{h}" fill="none" stroke="#000" stroke-width="{s}"/>\n')
+                    if svg_rects: svg_list.append(f'     <rect class="bbox" x="{x1}" y="{y1}" width="{w}" height="{h}" fill="none" stroke="#000" stroke-width="{s}"/>\n')
                     # text_y = y1 # this requires "dominant-baseline: hanging"
-                    text_y = y2
+                    # text_y = y2
                     text_y = y1 + (h / 2) # this requires "dominant-baseline: mathematical"
-                    text_size = h # this can overflow too-narrow bboxes
-                    text_size = w / len(text) * 1.5
-                    text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    out.write(f'     <text x="{x1}" y="{text_y}" fill="#000" font-size="{text_size}px" xml:space="preserve">{text_html}</text>\n')
-                    out.write('    </g>\n') # word
-                out.write('   </g>\n') # line
-            out.write('  </g>\n') # par
-        out.write(' </g>\n') # page
+                    text_bbox = draw.textbbox((0, 0), text, font=font) # NOTE different font size
+                    text_width, text_height = (text_bbox[2] - text_bbox[0]), (text_bbox[3] - text_bbox[1])
+                    text_aspect = text_width / text_height
+                    w_actual = h * text_aspect
+                    scale_w = w_actual / w
+                    text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+                    font_size = h
+                    # FIXME "font-size = bbox_height" only works when the text has "ascender" letters (hklYT) and "descender" letters (gyqp)
+                    # https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/transform#scale
+                    # https://stackoverflow.com/questions/15430189/pure-svg-way-to-fit-text-to-a-box
+                    # svg = f'     <text x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" transform-origin="{x1} {text_y}" transform="scale({scale_w} 1)" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
+                    # svg = f'     <text x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" transform-box="fill-box" transform-origin="left top" fill="#000" font-size="{font_size}px" transform="scale({scale_w} 1)" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
+                    # svg = f'     <text x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" transform-origin="{x1} {y1}" transform="scale({scale_w} 1)" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
+                    svg = f'     <text id="{_id}" x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" textLength="{w}" lengthAdjust="spacingAndGlyphs" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
+                    svg_list.append(svg)
+                    # no. z="..." requires svg 2
+                    # text_z += 1
+                    if svg_groups: svg_list.append('    </g>\n') # word
+                if svg_groups: svg_list.append('   </g>\n') # line
+            if svg_groups: svg_list.append('  </g>\n') # par
+        if svg_groups: svg_list.append(' </g>\n') # page
         page_offset_y += page_h
+    svg_list.reverse()
+    for svg in svg_list:
+        out.write(svg)
     out.write('</svg>\n')
 
 
