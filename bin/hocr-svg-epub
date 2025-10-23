@@ -29,9 +29,7 @@ def j(o):
     return json.dumps(o, indent=2)
 
 
-def process_files(infiles, reverse):
-    if reverse:
-        return process_files_svg2hocr(infiles)
+def process_files(infiles):
     return process_files_hocr2svg(infiles)
 
 
@@ -295,17 +293,8 @@ if __name__ == '__main__':
             '1.hocr 2.hocr 3.hocr.',
             'Or a list of hocr and image files:',
             '1.hocr 1.jpg 2.hocr 2.jpg 3.hocr 3.jpg.',
-            'Or in reverse mode, a list of svg files:',
-            '1.svg 2.svg 3.svg',
         ]),
-    )
-    parser.add_argument(
-        '-r',
-        '--reverse',
-        help='Reverse mode (svg2hocr)',
-        default=False,
-        action='store_true',
     )
     args = parser.parse_args()
 
-    process_files(args.infiles, args.reverse)
+    process_files(args.infiles)
