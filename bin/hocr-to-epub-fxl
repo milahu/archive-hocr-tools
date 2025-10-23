@@ -64,6 +64,7 @@ def process_page(hocrfile):
     for page_elem in hocr_page_iterator(hocrfile):
         page = hocr_page_to_word_data(page_elem)
 
+    # --- find image ---
     page_image_path = None
     with open(hocrfile, "rb") as f:
         if m := re.search(rb'''<div class='ocr_page'.*?title='image "([^"]+)"''', f.read()):
@@ -71,19 +72,29 @@ def process_page(hocrfile):
     if not page_image_path:
         raise ValueError(f"Missing image for {hocrfile}")
 
-    # --- base name ---
     page_base = os.path.splitext(os.path.basename(hocrfile))[0]
+    cached_webp_path = f"{page_image_path}.webp"
 
-    # --- image conversion ---
-    im = Image.open(page_image_path)
-    page_w, page_h = im.size
-    if im.mode not in ("RGB", "L"):
-        im = im.convert("RGB")
-    buf = io.BytesIO()
-    im.save(buf, format="WEBP", quality=1, method=6, lossless=False, optimize=True)
-    img_data = buf.getvalue()
-    im.close()
-    webp_name = f"{page_base}.webp"
+    # --- check cache ---
+    if os.path.exists(cached_webp_path):
+        with open(cached_webp_path, "rb") as f:
+            img_data = f.read()
+        im = Image.open(page_image_path)
+        page_w, page_h = im.size
+        im.close()
+    else:
+        # --- compress and save cache ---
+        im = Image.open(page_image_path)
+        page_w, page_h = im.size
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        buf = io.BytesIO()
+        im.save(buf, format="WEBP", quality=1, method=6, lossless=False, optimize=True)
+        img_data = buf.getvalue()
+        # write cache file
+        with open(cached_webp_path, "wb") as f:
+            f.write(img_data)
+        im.close()
 
     # --- SVG generation ---
     svg_buf = io.StringIO()
@@ -97,7 +108,7 @@ def process_page(hocrfile):
     svg_buf.write('<style>svg { dominant-baseline: mathematical; } text,tspan{fill:transparent;}</style>\n')
     svg_buf.write(
         f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
-        f'preserveAspectRatio="none" xlink:href="images/{webp_name}"/>\n'
+        f'preserveAspectRatio="none" xlink:href="images/{page_base}.webp"/>\n'
     )
 
     for paragraph in page:
@@ -120,6 +131,7 @@ def process_page(hocrfile):
             svg_buf.write('</text>\n')
     svg_buf.write('</svg>\n')
 
+    # --- return SVG + image ---
     return (
         f"OEBPS/{page_base}.svg",
         svg_buf.getvalue().encode("utf-8"),
