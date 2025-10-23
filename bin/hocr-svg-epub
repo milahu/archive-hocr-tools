@@ -191,11 +191,6 @@ def process_files_hocr2svg(infiles):
     page_offset_y = 0
     page_image_path = None
     out.write(f' <!-- {len(page_list)} pages -->\n')
-    # svg groups are bad for inkscape because they block direct access to text nodes
-    svg_groups = True # write svg groups
-    # bbox rects are bad because they double the work
-    # text nodes alone should store both content and positions
-    svg_rects = False # write bboxes as svg rects
     for page_idx, page in enumerate(page_list):
         if imgfiles:
             page_image_path = imgfiles[page_idx]
@@ -209,9 +204,6 @@ def process_files_hocr2svg(infiles):
                 continue
             page_w = page_bbox[2] # x2
             page_h = page_bbox[3] # y2
-        _id = f"p{page_idx + 1}"
-        if svg_groups: out.write(f' <g id="{_id}" class="page" transform="translate(0, {page_offset_y})">\n')
-        if svg_rects: out.write(f'  <rect class="bbox" x="0" y="0" width="{page_w}" height="{page_h}" fill="none" stroke="#000" stroke-width=".26458"/>\n')
         if page_image_path:
             page_image_type = page_image_path.split(".")[-1]
             if 0:
@@ -246,42 +238,29 @@ def process_files_hocr2svg(infiles):
             # page_image_type = page_image_path.split(".")[-1]
             # if page_image_type == "jpg": page_image_type = "jpeg"
             # if page_image_type == "tif": page_image_type = "tiff"
-            out.write(f'  <image opacity="1" x="0" y="0" width="{page_w}" height="{page_h}" preserveAspectRatio="none" xlink:href="file://{page_image_path}"/>\n')
-        out.write(f'  <!-- {len(page)} paragraphs -->\n')
+            out.write(f'  <image x="0" y="0" width="{page_w}" height="{page_h}" preserveAspectRatio="none" xlink:href="file://{page_image_path}"/>\n')
         for paragraph_idx, paragraph in enumerate(page):
-            _id = f"p{page_idx + 1}-p{paragraph_idx + 1}"
             # x1, y1, x2, y2 = paragraph["bbox"] # KeyError: 'bbox'
             first_line = paragraph["lines"][0]
             x1, y1, x2, y2 = first_line["bbox"]
             y1 -= 1 # move up
-            if svg_groups: out.write(f'  <g id="{_id}" class="par">\n')
             # insert an empty line ("line zero") before each paragraph
             # so in plain text, paragraphs are separated by empty lines
-            _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l0"
             # wontfix? this creates " \n" instead of "\n"
-            svg = f'   <text class="before-par" id="{_id}" x="{x1}" y="{y1}" xml:space="preserve"> </text>\n'
-            # &#10; = "\n" = line feed
-            # svg = f'   <text class="before-par" id="{_id}" x="{x1}" y="{y1}" xml:space="preserve">&#10;</text>\n'
+            svg = f'   <text x="{x1}" y="{y1}" xml:space="preserve"> </text>\n'
             out.write(svg)
-            out.write(f'   <!-- {len(paragraph["lines"])} lines -->\n')
             for line_idx, line in enumerate(paragraph["lines"]):
-                _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l{line_idx + 1}"
                 x1, y1, x2, y2 = line["bbox"]
                 w = x2 - x1
                 h = y2 - y1
-                # if svg_groups: out.write(f'   <g id="{_id}" class="line">\n')
-                svg = f'   <text class="line" id="{_id}" x="{x1}" y="{y1}" _w="{w}" _h="{h}">\n'
+                svg = f'   <text x="{x1}" y="{y1}">\n'
                 out.write(svg)
-                out.write(f'    <!-- {len(line["words"])} words -->\n')
                 for word_idx, word in enumerate(line["words"]):
-                    _id = f"p{page_idx + 1}-p{paragraph_idx + 1}-l{line_idx + 1}-w{word_idx + 1}"
-                    # if svg_groups: out.write(f'    <g id="{_id}" class="word">\n')
                     x1, y1, x2, y2 = word["bbox"]
                     w = x2 - x1
                     h = y2 - y1
                     s = h / 10 # stroke width
                     text = word["text"]
-                    if svg_rects: out.write(f'     <rect class="bbox" x="{x1}" y="{y1}" width="{w}" height="{h}" fill="none" stroke="#000" stroke-width="{s}"/>\n')
                     # text_y = y1 # this requires "dominant-baseline: hanging"
                     # text_y = y2
                     text_y = y1 + (h / 2) # this requires "dominant-baseline: mathematical"
@@ -292,21 +271,12 @@ def process_files_hocr2svg(infiles):
                     scale_w = w_actual / w
                     text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
                     font_size = h
-                    # FIXME "font-size = bbox_height" only works when the text has "ascender" letters (hklYT) and "descender" letters (gyqp)
-                    # https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/transform#scale
-                    # https://stackoverflow.com/questions/15430189/pure-svg-way-to-fit-text-to-a-box
-                    # svg = f'     <text x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" transform-origin="{x1} {text_y}" transform="scale({scale_w} 1)" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
-                    # svg = f'     <text x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" transform-box="fill-box" transform-origin="left top" fill="#000" font-size="{font_size}px" transform="scale({scale_w} 1)" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
-                    # svg = f'     <text x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" transform-origin="{x1} {y1}" transform="scale({scale_w} 1)" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
-                    # svg = f'     <text id="{_id}" x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" textLength="{w}" lengthAdjust="spacingAndGlyphs" xml:space="preserve" inkscape:label="{text_html}">{text_html}</text>\n'
-                    svg = f'      <tspan class="word" id="{_id}" x="{x1}" y="{text_y}" _w="{w}" _h="{h}" _a1="{w / h}" _w2="{text_width}" _h2="{text_height}" _a2="{text_aspect}" fill="#000" font-size="{font_size}px" textLength="{w}" lengthAdjust="spacingAndGlyphs" xml:space="preserve" inkscape:label="{text_html}">{text_html}</tspan>\n'
+                    # xml:space="preserve
+                    svg = f'      <tspan x="{x1}" y="{text_y}" font-size="{font_size}px" textLength="{w}" lengthAdjust="spacingAndGlyphs">{text_html}</tspan>\n'
                     out.write(svg)
                     # no. z="..." requires svg 2
                     # text_z += 1
-                    # if svg_groups: out.write('    </g>\n') # word
-                if svg_groups: out.write('   </text>\n') # line
-            if svg_groups: out.write('  </g>\n') # par
-        if svg_groups: out.write(' </g>\n') # page
+                out.write('   </text>\n') # line
         page_offset_y += page_h
     out.write('</svg>\n')
 
