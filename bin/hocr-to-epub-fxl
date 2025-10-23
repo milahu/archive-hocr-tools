@@ -13,6 +13,7 @@ import zipfile
 import datetime
 from xml.sax.saxutils import escape
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import importlib.resources
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -209,6 +210,7 @@ def process_files_hocr2epubfxl(infiles, output_path):
         # --- process pages in parallel and stream directly to ZIP ---
         next_page = 0
         page_results = {}
+        svg_path_list = []
         max_workers = os.cpu_count() # TODO expose CLI option
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(process_page, f): i for i, f in enumerate(hocrfiles)}
@@ -223,7 +225,19 @@ def process_files_hocr2epubfxl(infiles, output_path):
                     svg_path, svg_data, img_path, img_data = page_results.pop(next_page)
                     zf.writestr(svg_path, svg_data, compress_type=zipfile.ZIP_DEFLATED)
                     zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
+                    svg_path_list.append(svg_path)
                     next_page += 1
+
+        reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
+        reader_html_data = reader_html_data.replace(
+            b"const svgFiles = [ /* TODO */ ];",
+            (
+                b"const svgFiles = [\n" +
+                b"".join(map(lambda s: repr(s).encode("utf8") + b",\n", svg_path_list)) +
+                b"];"
+            )
+        )
+        zf.writestr("index.html", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
     # print(f"[+] EPUB written: {output_path}")
 

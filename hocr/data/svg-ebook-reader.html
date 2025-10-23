@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG eBook Reader</title>
+<style>
+  body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #menu-bar {
+    display: flex;
+    align-items: center;
+    padding: 5px 10px;
+    background-color: #f0f0f0;
+    border-bottom: 1px solid #ccc;
+  }
+
+  #menu-bar button {
+    margin-right: 10px;
+    padding: 5px 10px;
+  }
+
+  #menu-bar input {
+    width: 50px;
+    text-align: center;
+    margin-right: 10px;
+  }
+
+  #viewer {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow-y: auto;
+    background-color: #e0e0e0;
+    scroll-behavior: smooth;
+  }
+
+  iframe {
+    border: none;
+    height: 100%;
+    margin: 0 5px;
+  }
+
+  /* Single-page mode */
+  #viewer.single-page iframe {
+    width: 100%;
+    margin: 0;
+  }
+
+  /* Two-page mode */
+  #viewer.two-page iframe {
+    width: 45%;
+  }
+</style>
+</head>
+<body>
+
+<div id="menu-bar">
+  <button id="prevPage">Previous</button>
+  <button id="nextPage">Next</button>
+  <input type="number" id="pageNumber" min="1" value="1">
+  <span id="totalPages"></span>
+  <button id="toggleMode" style="margin-left:auto;">Two-Page Mode</button>
+</div>
+
+<div id="viewer" class="single-page">
+  <iframe id="page1"></iframe>
+</div>
+
+<script>
+  // --- CONFIG: list of SVG files ---
+  const svgFiles = [ /* TODO */ ];
+
+  let currentPage = 1; // 1-based
+  const totalPages = svgFiles.length;
+
+  const viewer = document.getElementById('viewer');
+  const pageNumberInput = document.getElementById('pageNumber');
+  const totalPagesSpan = document.getElementById('totalPages');
+  const toggleBtn = document.getElementById('toggleMode');
+
+  totalPagesSpan.textContent = `/ ${totalPages}`;
+
+  let twoPageMode = false; // single-page default
+
+  function createIframe(id) {
+    const iframe = document.createElement('iframe');
+    iframe.id = id;
+    viewer.appendChild(iframe);
+    return iframe;
+  }
+
+  function getIframe(index) {
+    return document.getElementById(index);
+  }
+
+  function styleSVG(iframe) {
+    if (!iframe || !iframe.contentDocument) return;
+    const svg = iframe.contentDocument.querySelector('svg');
+    if (svg) {
+      svg.style.width = '100%';
+      svg.style.height = 'auto';
+      svg.style.display = 'block';
+      svg.style.margin = '0 auto';
+    }
+  }
+
+  function loadPages() {
+    let page1 = document.getElementById('page1');
+    if (!page1) page1 = createIframe('page1');
+
+    let page2 = document.getElementById('page2');
+    if (twoPageMode && !page2) page2 = createIframe('page2');
+    if (!twoPageMode && page2) page2.remove();
+
+    if (twoPageMode) {
+      // Compute spread: left = even page
+      let leftIndex, rightIndex;
+
+      if (currentPage === 1) {
+        leftIndex = -1;       // empty
+        rightIndex = 0;       // page 1
+      } else {
+        leftIndex = currentPage % 2 === 0 ? currentPage - 1 : currentPage - 2;
+        rightIndex = leftIndex + 1;
+      }
+
+      page1.src = leftIndex >= 0 ? svgFiles[leftIndex] : '';
+      page2.src = rightIndex < totalPages ? svgFiles[rightIndex] : '';
+
+      page1.onload = () => styleSVG(page1);
+      page2.onload = () => styleSVG(page2);
+
+    } else {
+      page1.src = svgFiles[currentPage - 1] || '';
+      page1.onload = () => styleSVG(page1);
+    }
+
+    pageNumberInput.value = currentPage;
+    viewer.scrollTop = 0;
+  }
+
+  function goToPage(page) {
+    if (page < 1) page = 1;
+    if (page > totalPages) page = totalPages;
+    currentPage = page;
+    loadPages();
+  }
+
+  function nextPage() {
+    if (twoPageMode) goToPage(currentPage + 2);
+    else goToPage(currentPage + 1);
+  }
+
+  function prevPage() {
+    if (twoPageMode) goToPage(currentPage - 2);
+    else goToPage(currentPage - 1);
+  }
+
+  function updateMode() {
+    viewer.className = twoPageMode ? 'two-page' : 'single-page';
+    toggleBtn.textContent = twoPageMode ? 'Single-Page Mode' : 'Two-Page Mode';
+    loadPages();
+  }
+
+  document.getElementById('prevPage').addEventListener('click', prevPage);
+  document.getElementById('nextPage').addEventListener('click', nextPage);
+  pageNumberInput.addEventListener('change', () => goToPage(parseInt(pageNumberInput.value)));
+  toggleBtn.addEventListener('click', () => {
+    twoPageMode = !twoPageMode;
+    updateMode();
+  });
+
+  window.addEventListener('resize', () => {
+    // optional: could auto-switch based on width
+  });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') prevPage();
+    if (e.key === 'ArrowRight') nextPage();
+    if (e.key === 'ArrowUp') viewer.scrollBy({ top: -50, behavior: 'smooth' });
+    if (e.key === 'ArrowDown') viewer.scrollBy({ top: 50, behavior: 'smooth' });
+  });
+
+  // Sync scrolling in two-page mode
+  viewer.addEventListener('scroll', () => {
+    if (twoPageMode) {
+      const page1 = document.getElementById('page1');
+      const page2 = document.getElementById('page2');
+      if (page1?.contentWindow) page1.contentWindow.scrollTo(0, viewer.scrollTop);
+      if (page2?.contentWindow) page2.contentWindow.scrollTo(0, viewer.scrollTop);
+    }
+  });
+
+  // Initial load
+  loadPages();
+  updateMode();
+</script>
+
+</body>
+</html>
