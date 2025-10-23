@@ -214,18 +214,25 @@ def process_files_hocr2svg(infiles):
         if svg_rects: out.write(f'  <rect class="bbox" x="0" y="0" width="{page_w}" height="{page_h}" fill="none" stroke="#000" stroke-width=".26458"/>\n')
         if page_image_path:
             page_image_type = page_image_path.split(".")[-1]
-            if page_image_type == "webp":
+            if 0:
                 with open(page_image_path, "rb") as f:
                     # TODO read + write in chunks
                     page_image_bytes = f.read()
+            if page_image_type == "webp":
+                # keep page_image_path
+                pass
+            elif os.path.exists(f"{page_image_path}.webp"):
+                # read cache
+                page_image_path = f"{page_image_path}.webp"
             else:
+                # write cache
+                # convert page_image_path to webp
                 img = Image.open(page_image_path)
                 if img.mode not in ("RGB", "L"):
                     img = img.convert("RGB")
-                page_image_io = io.BytesIO()
                 QUALITY = 1 # percent
                 img.save(
-                    page_image_io,
+                    f"{page_image_path}.webp",
                     format="WEBP",
                     quality=QUALITY,
                     method=6,
@@ -234,14 +241,12 @@ def process_files_hocr2svg(infiles):
                     optimize=True,
                     reduction_effort=6,
                 )
-                page_image_bytes = page_image_io.getvalue()
-                del page_image_io
+                page_image_path = f"{page_image_path}.webp"
                 page_image_type = "webp"
-            page_image_base64 = base64.b64encode(page_image_bytes).decode("ascii")
             # page_image_type = page_image_path.split(".")[-1]
             # if page_image_type == "jpg": page_image_type = "jpeg"
             # if page_image_type == "tif": page_image_type = "tiff"
-            out.write(f'  <image opacity="1" x="0" y="0" width="{page_w}" height="{page_h}" preserveAspectRatio="none" xlink:href="data:image/{page_image_type};base64,{page_image_base64}"/>\n')
+            out.write(f'  <image opacity="1" x="0" y="0" width="{page_w}" height="{page_h}" preserveAspectRatio="none" xlink:href="file://{page_image_path}"/>\n')
         out.write(f'  <!-- {len(page)} paragraphs -->\n')
         for paragraph_idx, paragraph in enumerate(page):
             _id = f"p{page_idx + 1}-p{paragraph_idx + 1}"
