@@ -12,6 +12,7 @@ import mimetypes
 import zipfile
 import datetime
 from xml.sax.saxutils import escape
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -53,6 +54,80 @@ def is_image_path(path):
     return _type and _type.startswith("image/")
 
 
+def process_page(hocrfile):
+    from PIL import Image
+    import io, re, os
+    from xml.sax.saxutils import escape
+    from hocr.parse import hocr_page_iterator, hocr_page_to_word_data
+
+    # --- extract page data ---
+    for page_elem in hocr_page_iterator(hocrfile):
+        page = hocr_page_to_word_data(page_elem)
+
+    page_image_path = None
+    with open(hocrfile, "rb") as f:
+        if m := re.search(rb'''<div class='ocr_page'.*?title='image "([^"]+)"''', f.read()):
+            page_image_path = os.path.join(os.path.dirname(hocrfile), m.group(1).decode("utf8"))
+    if not page_image_path:
+        raise ValueError(f"Missing image for {hocrfile}")
+
+    # --- base name ---
+    page_base = os.path.splitext(os.path.basename(hocrfile))[0]
+
+    # --- image conversion ---
+    im = Image.open(page_image_path)
+    page_w, page_h = im.size
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    buf = io.BytesIO()
+    im.save(buf, format="WEBP", quality=1, method=6, lossless=False, optimize=True)
+    img_data = buf.getvalue()
+    im.close()
+    webp_name = f"{page_base}.webp"
+
+    # --- SVG generation ---
+    svg_buf = io.StringIO()
+    svg_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+    svg_buf.write(
+        f'<svg version="1.1" viewBox="0 0 {page_w} {page_h}" '
+        'preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto" '
+        'xmlns="http://www.w3.org/2000/svg" '
+        'xmlns:xlink="http://www.w3.org/1999/xlink">\n'
+    )
+    svg_buf.write('<style>svg { dominant-baseline: mathematical; } text,tspan{fill:transparent;}</style>\n')
+    svg_buf.write(
+        f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
+        f'preserveAspectRatio="none" xlink:href="images/{webp_name}"/>\n'
+    )
+
+    for paragraph in page:
+        first_line = paragraph["lines"][0]
+        x1, y1, x2, y2 = first_line["bbox"]
+        svg_buf.write(f'<text x="{x1}" y="{y1-1}" xml:space="preserve"> </text>\n')
+        for line in paragraph["lines"]:
+            x1, y1, x2, y2 = line["bbox"]
+            svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
+            for word in line["words"]:
+                x1, y1, x2, y2 = word["bbox"]
+                w = x2 - x1
+                h = y2 - y1
+                text_y = y1 + (h / 2)
+                text = escape(word["text"])
+                svg_buf.write(
+                    f'  <tspan x="{x1}" y="{text_y}" font-size="{h}px" '
+                    f'textLength="{w}" lengthAdjust="spacingAndGlyphs">{text}</tspan>\n'
+                )
+            svg_buf.write('</text>\n')
+    svg_buf.write('</svg>\n')
+
+    return (
+        f"OEBPS/{page_base}.svg",
+        svg_buf.getvalue().encode("utf-8"),
+        f"OEBPS/images/{page_base}.webp",
+        img_data,
+    )
+
+
 def process_files_hocr2epubfxl(infiles, output_path):
     from PIL import Image, ImageFont, ImageDraw
     import fontconfig
@@ -81,72 +156,13 @@ def process_files_hocr2epubfxl(infiles, output_path):
     svg_pages = []
     image_entries = []
 
-    for page_idx, hocrfile in enumerate(hocrfiles):
-        # --- extract page and text data ---
-        for page_elem in hocr_page_iterator(hocrfile):
-            page = hocr_page_to_word_data(page_elem)
-        page_image_path = None
-        # TODO get page_image_path from page_elem
-        with open(hocrfile, "rb") as f:
-            if m := re.search(rb'''<div class='ocr_page'.*?title='image "([^"]+)"''', f.read()):
-                page_image_path = os.path.join(os.path.dirname(hocrfile), m.group(1).decode("utf8"))
-
-        # --- base name for this page (used for SVG + image) ---
-        page_base = os.path.splitext(os.path.basename(hocrfile))[0]
-
-        if page_image_path:
-            im = Image.open(page_image_path)
-            page_w, page_h = im.size
-
-            # convert to webp (low-quality, small)
-            webp_name = f"{page_base}.webp"
-            buf = io.BytesIO()
-            if im.mode not in ("RGB", "L"):
-                im = im.convert("RGB")
-            im.save(buf, format="WEBP", quality=1, method=6, lossless=False, optimize=True)
-            image_entries.append((f"OEBPS/images/{webp_name}", buf.getvalue()))
-            im.close()
-        else:
-            raise ValueError("Missing image for hOCR page")
-
-        # --- build SVG in memory ---
-        svg_buf = io.StringIO()
-        svg_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
-        svg_buf.write(
-            f'<svg version="1.1" viewBox="0 0 {page_w} {page_h}" '
-            'preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto" '
-            'xmlns="http://www.w3.org/2000/svg" '
-            'xmlns:xlink="http://www.w3.org/1999/xlink">\n'
-        )
-        svg_buf.write('<style>\n')
-        svg_buf.write('svg { dominant-baseline: mathematical; }\n')
-        svg_buf.write('text, tspan { fill:transparent; }\n')
-        svg_buf.write('</style>\n')
-        svg_buf.write(
-            f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
-            f'preserveAspectRatio="none" xlink:href="images/{webp_name}"/>\n'
-        )
-
-        for paragraph in page:
-            first_line = paragraph["lines"][0]
-            x1, y1, x2, y2 = first_line["bbox"]
-            svg_buf.write(f'<text x="{x1}" y="{y1-1}" xml:space="preserve"> </text>\n')
-            for line in paragraph["lines"]:
-                x1, y1, x2, y2 = line["bbox"]
-                svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
-                for word in line["words"]:
-                    x1, y1, x2, y2 = word["bbox"]
-                    w = x2 - x1
-                    h = y2 - y1
-                    text_y = y1 + (h / 2)
-                    text = escape(word["text"])
-                    svg_buf.write(
-                        f'  <tspan x="{x1}" y="{text_y}" font-size="{h}px" '
-                        f'textLength="{w}" lengthAdjust="spacingAndGlyphs">{text}</tspan>\n'
-                    )
-                svg_buf.write('</text>\n')
-        svg_buf.write('</svg>\n')
-        svg_pages.append((f"OEBPS/{page_base}.svg", svg_buf.getvalue().encode("utf-8")))
+    # --- parallel processing of all pages ---
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures = {executor.submit(process_page, hocrfile): hocrfile for hocrfile in hocrfiles}
+        for future in as_completed(futures):
+            svg_path, svg_data, img_path, img_data = future.result()
+            svg_pages.append((svg_path, svg_data))
+            image_entries.append((img_path, img_data))
 
     # --- create EPUB archive ---
     with zipfile.ZipFile(output_path, "w") as zf:
