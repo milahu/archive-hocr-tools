@@ -73,12 +73,14 @@ def process_page(hocrfile):
     svg_buf = io.StringIO()
     svg_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
     svg_buf.write(
-        f'<svg version="1.1" viewBox="0 0 {page_w} {page_h}" '
-        'preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto" '
-        'xmlns="http://www.w3.org/2000/svg" '
-        'xmlns:xlink="http://www.w3.org/1999/xlink">\n'
+        f'<svg version="1.1" viewBox="0 0 {page_w} {page_h}"\n'
+        ' preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto"\n'
+        ' xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"\n'
+        '>\n'
     )
-    svg_buf.write('<style>svg { dominant-baseline: mathematical; } text,tspan{fill:transparent;}</style>\n')
+    svg_buf.write('<style>\n')
+    svg_buf.write('text, tspan { dominant-baseline: mathematical; fill: transparent; }\n')
+    svg_buf.write('</style>\n')
     svg_buf.write(
         f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
         f'preserveAspectRatio="none" xlink:href="images/{page_base}.webp"/>\n'
