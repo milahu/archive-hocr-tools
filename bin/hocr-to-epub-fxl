@@ -27,11 +27,14 @@ from PIL import Image
 
 hocrfile_extensions = ("hocr", "html")
 
-WEBP_QUALITY = 1
 WEBP_METHOD = 6
 
 # --- top-level page processor ---
-def process_page(hocrfile, scale_factor):
+def process_page(
+        hocrfile,
+        scale_factor=1.0,
+        compress_quality=1,
+    ):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     # --- parse HOCR ---
     for page_elem in hocr_page_iterator(hocrfile):
@@ -47,7 +50,7 @@ def process_page(hocrfile, scale_factor):
         raise ValueError(f"Missing image for {hocrfile}")
 
     page_base = os.path.splitext(os.path.basename(hocrfile))[0]
-    cached_webp_path = f"{page_image_path}.q{WEBP_QUALITY}.s{scale_factor}.webp"
+    cached_webp_path = f"{page_image_path}.q{compress_quality}.s{scale_factor}.webp"
 
     # --- check WebP cache ---
     if os.path.exists(cached_webp_path):
@@ -70,7 +73,7 @@ def process_page(hocrfile, scale_factor):
             page_h = round(page_h * scale_factor)
             im = im.resize((page_w, page_h), resample=Image.LANCZOS)
         buf = io.BytesIO()
-        im.save(buf, format="WEBP", quality=WEBP_QUALITY, method=WEBP_METHOD, lossless=False, optimize=True)
+        im.save(buf, format="WEBP", quality=compress_quality, method=WEBP_METHOD, lossless=False, optimize=True)
         img_data = buf.getvalue()
         del buf
         with open(cached_webp_path, "wb") as f:
@@ -148,6 +151,7 @@ def process_files_hocr2epubfxl(
         infiles,
         output_path,
         scale_factor=1.0,
+        compress_quality=1,
     ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
@@ -240,8 +244,12 @@ def process_files_hocr2epubfxl(
         page_results = {}
         svg_path_list = []
         max_workers = os.cpu_count() # TODO expose CLI option
+        const_args = (
+            scale_factor,
+            compress_quality,
+        )
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(process_page, f, scale_factor): i for i, f in enumerate(hocrfiles)}
+            futures = {executor.submit(process_page, f, *const_args): i for i, f in enumerate(hocrfiles)}
 
             for future in as_completed(futures):
                 idx = futures[future]
@@ -296,12 +304,21 @@ if __name__ == '__main__':
         default=1.0,
         type=float,
     )
+    parser.add_argument(
+        '-q',
+        '--quality',
+        help='compression quality in percent for the page images. default: 1. example: 5',
+        default=1,
+        type=int,
+    )
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
+    assert 1 <= args.quality <= 100
 
     process_files_hocr2epubfxl(
         args.infiles,
         args.output,
         args.scale,
+        args.quality,
     )
