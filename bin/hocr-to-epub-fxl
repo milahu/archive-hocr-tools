@@ -67,6 +67,7 @@ def process_page(
         compress_quality=1,
         image_format="avif",
         text_format="svg",
+        doc_title="",
     ):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     assert PIL.features.check(image_format), f"PIL does not support image_format {image_format!r}"
@@ -161,6 +162,7 @@ def process_page(
         page_h,
         scale_bbox,
         epub_page_image_path,
+        doc_title,
     )
     del page
 
@@ -178,6 +180,7 @@ def get_text_data_svg(
         page_h,
         scale_bbox,
         epub_page_image_path,
+        doc_title,
     ):
 
     # --- build SVG ---
@@ -232,6 +235,7 @@ def get_text_data_html(
         page_h,
         scale_bbox,
         epub_page_image_path,
+        doc_title,
     ):
 
     # --- build HTML ---
@@ -245,8 +249,8 @@ def get_text_data_html(
     html_buf.write(f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
     html_buf.write('<head>\n')
     html_buf.write('<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />\n')
-    # TODO set metadata: title
-    html_buf.write(f'<title>EPUB reader</title>\n')
+    # set metadata: title
+    html_buf.write(f'<title>{escape(doc_title)} ({os.path.basename(hocrfile)})</title>\n')
 
     html_buf.write('<style type="text/css">\n')
 
@@ -353,6 +357,7 @@ def process_files_hocr2epubfxl(
         selected_pages="all",
         image_format="avif",
         text_format="svg",
+        doc_title="",
     ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
@@ -415,8 +420,8 @@ def process_files_hocr2epubfxl(
             # " unique-identifier='BookId'\n"
             ">\n"
             "  <metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
-            # TODO set metadata
-            # "    <dc:title>Some Title</dc:title>\n"
+            # set metadata: title
+            f"    <dc:title>{escape(doc_title)}</dc:title>\n"
             # "    <dc:language>en</dc:language>\n"
             # f"    <dc:identifier id='BookId'>urn:uuid:{datetime.datetime.now(datetime.UTC).timestamp()}</dc:identifier>\n"
             "    <dc:creator>hocr2epubfxl</dc:creator>\n"
@@ -441,8 +446,8 @@ def process_files_hocr2epubfxl(
             # TODO set book id
             # "   <meta name='dtb:uid' content='BookId'/>\n"
             "  </head>\n"
-            # TODO set metadata
-            # "  <docTitle><text>Some Title</text></docTitle>\n"
+            # set metadata: title
+            f"  <docTitle><text>{escape(doc_title)}</text></docTitle>\n"
             "  <navMap>\n"
         ]
         for i, base in enumerate(page_basenames):
@@ -469,6 +474,7 @@ def process_files_hocr2epubfxl(
             compress_quality,
             image_format,
             text_format,
+            doc_title,
         )
         with (
                 ProcessPoolExecutor(max_workers=max_workers) as executor,
@@ -500,6 +506,9 @@ def process_files_hocr2epubfxl(
                 b"];"
             )
         )
+        # set metadata: title
+        replacement = b"<title>" + doc_title.encode("utf8") + b"</title>"
+        reader_html_data = re.sub(rb"<title>.*</title>", replacement, reader_html_data)
         zf.writestr("index.html", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
     # print(f"[+] EPUB written: {output_path}")
@@ -559,6 +568,12 @@ if __name__ == '__main__':
         default=DEFAULT_TEXT_FORMAT,
         type=str,
     )
+    parser.add_argument(
+        '--doc-title', # args.doc_title
+        help=f'document title',
+        default="",
+        type=str,
+    )
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
@@ -574,4 +589,5 @@ if __name__ == '__main__':
         args.pages,
         args.image_format,
         args.text_format,
+        args.doc_title,
     )
