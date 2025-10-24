@@ -251,6 +251,7 @@ def get_text_data_html(
     html_buf.write('<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />\n')
     # set metadata: title
     html_buf.write(f'<title>{escape(doc_title)} ({os.path.basename(hocrfile)})</title>\n')
+    html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
 
     html_buf.write('<style type="text/css">\n')
 
@@ -424,7 +425,7 @@ def process_files_hocr2epubfxl(
             f"    <dc:title>{escape(doc_title)}</dc:title>\n"
             # "    <dc:language>en</dc:language>\n"
             # f"    <dc:identifier id='BookId'>urn:uuid:{datetime.datetime.now(datetime.UTC).timestamp()}</dc:identifier>\n"
-            "    <dc:creator>hocr2epubfxl</dc:creator>\n"
+            "    <dc:creator>hocr-to-epub-fxl</dc:creator>\n"
             # "    <meta name='cover' content='img1'/>\n"
             "  </metadata>\n"
             "  <manifest>\n"
