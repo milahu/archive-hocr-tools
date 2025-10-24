@@ -27,8 +27,11 @@ from PIL import Image
 
 hocrfile_extensions = ("hocr", "html")
 
+WEBP_QUALITY = 1
+WEBP_METHOD = 6
+
 # --- top-level page processor ---
-def process_page(hocrfile):
+def process_page(hocrfile, scale_factor):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     # --- parse HOCR ---
     for page_elem in hocr_page_iterator(hocrfile):
@@ -44,30 +47,49 @@ def process_page(hocrfile):
         raise ValueError(f"Missing image for {hocrfile}")
 
     page_base = os.path.splitext(os.path.basename(hocrfile))[0]
-    cached_webp_path = f"{page_image_path}.webp"
+    cached_webp_path = f"{page_image_path}.q{WEBP_QUALITY}.s{scale_factor}.webp"
 
     # --- check WebP cache ---
     if os.path.exists(cached_webp_path):
+        # read cache
         with open(cached_webp_path, "rb") as f:
             img_data = f.read()
-        im = Image.open(page_image_path)
+        im = Image.open(cached_webp_path)
         page_w, page_h = im.size
         im.close()
         del im
     else:
+        # write cache
+        # compress page image
         im = Image.open(page_image_path)
         page_w, page_h = im.size
         if im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
+        if scale_factor != 1:
+            page_w = round(page_w * scale_factor)
+            page_h = round(page_h * scale_factor)
+            im = im.resize((page_w, page_h), resample=Image.LANCZOS)
         buf = io.BytesIO()
-        im.save(buf, format="WEBP", quality=1, method=6, lossless=False, optimize=True)
+        im.save(buf, format="WEBP", quality=WEBP_QUALITY, method=WEBP_METHOD, lossless=False, optimize=True)
         img_data = buf.getvalue()
         del buf
-        # save cache
         with open(cached_webp_path, "wb") as f:
             f.write(img_data)
         im.close()
         del im
+
+    if scale_factor == 1:
+        def scale_bbox(bbox):
+            return bbox # noop
+    else:
+        def scale_bbox(bbox):
+            x1, y1, x2, y2 = bbox
+            x1 = x1 * scale_factor
+            x2 = x2 * scale_factor
+            y1 = y1 * scale_factor
+            y2 = y2 * scale_factor
+            bbox = (x1, y1, x2, y2)
+            return bbox
 
     # --- build SVG ---
     svg_buf = io.StringIO()
@@ -88,13 +110,13 @@ def process_page(hocrfile):
 
     for paragraph in page:
         first_line = paragraph["lines"][0]
-        x1, y1, x2, y2 = first_line["bbox"]
+        x1, y1, x2, y2 = scale_bbox(first_line["bbox"])
         svg_buf.write(f'<text x="{x1}" y="{y1-1}" xml:space="preserve"> </text>\n')
         for line in paragraph["lines"]:
-            x1, y1, x2, y2 = line["bbox"]
+            x1, y1, x2, y2 = scale_bbox(line["bbox"])
             svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
             for word in line["words"]:
-                x1, y1, x2, y2 = word["bbox"]
+                x1, y1, x2, y2 = scale_bbox(word["bbox"])
                 w = x2 - x1
                 h = y2 - y1
                 text_y = y1 + (h / 2)
@@ -122,7 +144,11 @@ def is_image_path(path):
 
 
 # --- main processor ---
-def process_files_hocr2epubfxl(infiles, output_path):
+def process_files_hocr2epubfxl(
+        infiles,
+        output_path,
+        scale_factor=1.0,
+    ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
     for f in infiles:
@@ -215,7 +241,7 @@ def process_files_hocr2epubfxl(infiles, output_path):
         svg_path_list = []
         max_workers = os.cpu_count() # TODO expose CLI option
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(process_page, f): i for i, f in enumerate(hocrfiles)}
+            futures = {executor.submit(process_page, f, scale_factor): i for i, f in enumerate(hocrfiles)}
 
             for future in as_completed(futures):
                 idx = futures[future]
@@ -263,6 +289,19 @@ if __name__ == '__main__':
         help='path to output EPUB file',
         required=True,
     )
+    parser.add_argument(
+        '-s',
+        '--scale',
+        help='scale factor for the page images. default: 1. example: 0.5',
+        default=1.0,
+        type=float,
+    )
     args = parser.parse_args()
 
-    process_files_hocr2epubfxl(args.infiles, args.output)
+    assert 0.01 <= args.scale <= 100
+
+    process_files_hocr2epubfxl(
+        args.infiles,
+        args.output,
+        args.scale,
+    )
