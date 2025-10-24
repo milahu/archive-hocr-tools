@@ -21,6 +21,11 @@
     background-color: #f0f0f0;
     border-bottom: 1px solid #ccc;
   }
+  #menu-bar {
+    transform-origin: top left;
+    /* transition: transform 0.1s ease; */
+    z-index: 10;
+  }
 
   #menu-bar button {
     margin-right: 10px;
@@ -45,8 +50,12 @@
 
   iframe {
     border: none;
+    flex: 1 1 auto;
     height: 100%;
+    /* ensure full viewport height */
+    /* height: 100vh; */
     margin: 0 5px;
+    transform-origin: top center;
   }
 
   /* Single-page mode */
@@ -200,6 +209,28 @@
       if (page2?.contentWindow) page2.contentWindow.scrollTo(0, viewer.scrollTop);
     }
   });
+
+  // prevent toolbar zoom
+  let lastDevicePixelRatio = window.devicePixelRatio;
+  function updateToolbarScale() {
+    const ratio = window.devicePixelRatio;
+    const toolbar = document.getElementById('menu-bar');
+    // Apply inverse scale so the toolbar stays 1:1 visually
+    toolbar.style.transform = `scale(${1 / ratio})`;
+    // Compensate for layout shrink (otherwise the scaled bar no longer spans full width)
+    toolbar.style.width = `${100 * ratio}%`;
+    lastDevicePixelRatio = ratio;
+  }
+  updateToolbarScale();
+  // Monitor for zoom changes (devicePixelRatio changes)
+  window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    .addEventListener('change', updateToolbarScale);
+  // Also poll periodically as fallback (some browsers don't fire the event reliably)
+  setInterval(() => {
+    if (window.devicePixelRatio !== lastDevicePixelRatio) {
+      updateToolbarScale();
+    }
+  }, 1000);
 
   // Initial load
   loadPages();
