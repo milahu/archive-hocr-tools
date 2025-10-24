@@ -149,6 +149,10 @@ def process_page(
     )
     svg_buf.write('<style>\n')
     svg_buf.write('text, tspan { dominant-baseline: mathematical; fill: transparent; }\n')
+    # invert image colors in dark mode
+    svg_buf.write('@media (prefers-color-scheme: dark) {\n')
+    svg_buf.write(' image { filter: invert(); }\n')
+    svg_buf.write('}\n')
     svg_buf.write('</style>\n')
     svg_buf.write(
         f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
