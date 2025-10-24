@@ -22,11 +22,33 @@ from hocr.parse import hocr_page_to_word_data
 from hocr.text import hocr_page_text
 from hocr.text import hocr_word_data_bbox
 
+import PIL.features
 from PIL import Image
 from tqdm import tqdm
 
 
 hocrfile_extensions = ("hocr", "html")
+
+# use imagemagick to compare avif qualities around 20%
+r'''
+src=001.tiff;
+for (( q=10; q<=30; q++ )); do
+    dst="$src".magick.s50.q$(printf %03d "$q").avif;
+    [ -e "$dst" ] && continue;
+    magick "$src" -scale 50% -quality ${q}% \
+        -define heic:lossless=true \
+        -define heic:chroma-subsample=4:4:4 \
+        -define heic:speed=0 \
+        "$dst";
+done
+'''
+DEFAULT_IMAGE_FORMAT = "avif"
+DEFAULT_QUALITY = 20
+
+if not PIL.features.check(DEFAULT_IMAGE_FORMAT):
+    DEFAULT_IMAGE_FORMAT = "webp"
+    DEFAULT_QUALITY = 1
+assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_format {DEFAULT_IMAGE_FORMAT!r}"
 
 WEBP_METHOD = 6
 
@@ -35,8 +57,10 @@ def process_page(
         hocrfile,
         scale_factor=1.0,
         compress_quality=1,
+        image_format="avif",
     ):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
+    assert PIL.features.check(image_format), f"PIL does not support image_format {image_format!r}"
     # --- parse HOCR ---
     for page_elem in hocr_page_iterator(hocrfile):
         page = hocr_page_to_word_data(page_elem)
@@ -51,14 +75,14 @@ def process_page(
         raise ValueError(f"Missing image for {hocrfile}")
 
     page_base = os.path.splitext(os.path.basename(hocrfile))[0]
-    cached_webp_path = f"{page_image_path}.q{compress_quality}.s{scale_factor}.webp"
+    cached_page_image_path = f"{page_image_path}.q{compress_quality}.s{scale_factor}.{image_format}"
 
-    # --- check WebP cache ---
-    if os.path.exists(cached_webp_path):
+    # --- check image cache ---
+    if os.path.exists(cached_page_image_path):
         # read cache
-        with open(cached_webp_path, "rb") as f:
+        with open(cached_page_image_path, "rb") as f:
             img_data = f.read()
-        im = Image.open(cached_webp_path)
+        im = Image.open(cached_page_image_path)
         page_w, page_h = im.size
         im.close()
         del im
@@ -74,10 +98,29 @@ def process_page(
             page_h = round(page_h * scale_factor)
             im = im.resize((page_w, page_h), resample=Image.LANCZOS)
         buf = io.BytesIO()
-        im.save(buf, format="WEBP", quality=compress_quality, method=WEBP_METHOD, lossless=False, optimize=True)
+        im_save_kwargs = dict(
+            quality=compress_quality,
+            lossless=False,
+            optimize=True,
+        )
+        if image_format == "avif":
+            im_save_kwargs["format"] = "AVIF"
+            # keep full color resolution
+            # prevent color bleeding around text
+            im_save_kwargs["subsampling"] = "4:4:4"
+            # speed trades off encoding time vs. quality. 0–10. lower is better.
+            im_save_kwargs["speed"] = 0
+            # TODO pass the original max_workers value to the avif encoder
+            # im_save_kwargs["max_threads"] = max_workers
+        elif image_format == "webp":
+            im_save_kwargs["format"] = "WEBP"
+            im_save_kwargs["method"] = WEBP_METHOD
+        else:
+            raise ValueError(f"unknown image format {image_format!r}")
+        im.save(buf, **im_save_kwargs)
         img_data = buf.getvalue()
         del buf
-        with open(cached_webp_path, "wb") as f:
+        with open(cached_page_image_path, "wb") as f:
             f.write(img_data)
         im.close()
         del im
@@ -109,7 +152,7 @@ def process_page(
     svg_buf.write('</style>\n')
     svg_buf.write(
         f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
-        f'preserveAspectRatio="none" xlink:href="images/{page_base}.webp"/>\n'
+        f'preserveAspectRatio="none" xlink:href="images/{page_base}.{image_format}"/>\n'
     )
 
     for paragraph in page:
@@ -135,7 +178,7 @@ def process_page(
     svg_data = svg_buf.getvalue().encode("utf-8")
     del svg_buf
     svg_path = f"OEBPS/{page_base}.svg"
-    img_path = f"OEBPS/images/{page_base}.webp"
+    img_path = f"OEBPS/images/{page_base}.{image_format}"
 
     # --- return file paths & data ---
     return (svg_path, svg_data, img_path, img_data)
@@ -154,6 +197,7 @@ def process_files_hocr2epubfxl(
         scale_factor=1.0,
         compress_quality=1,
         selected_pages="all",
+        image_format="avif",
     ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
@@ -205,7 +249,7 @@ def process_files_hocr2epubfxl(
         for i, base in enumerate(page_basenames):
             manifest_items.append(f"<item id='page{i+1}' href='{base}.svg' media-type='image/svg+xml'/>")
             spine_items.append(f"<itemref idref='page{i+1}'/>")
-            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.webp' media-type='image/webp'/>")
+            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{image_format}' media-type='image/{image_format}'/>")
 
         content_opf = (
             "<?xml version='1.0' encoding='utf-8'?>\n"
@@ -259,9 +303,15 @@ def process_files_hocr2epubfxl(
         page_results = {}
         svg_path_list = []
         max_workers = os.cpu_count() # TODO expose CLI option
+        if image_format == "avif":
+            # the avif encoder is multi-threaded already
+            # TODO pass the original max_workers value to the avif encoder
+            # TODO dont use ProcessPoolExecutor when max_workers == 1
+            max_workers = 1
         const_args = (
             scale_factor,
             compress_quality,
+            image_format,
         )
         with (
                 ProcessPoolExecutor(max_workers=max_workers) as executor,
@@ -326,8 +376,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '-q',
         '--quality',
-        help='compression quality in percent for the page images. default: 1. example: 5',
-        default=1,
+        help=f'compression quality in percent for the page images. default: {DEFAULT_QUALITY}. example: 5',
+        default=DEFAULT_QUALITY,
         type=int,
     )
     parser.add_argument(
@@ -337,10 +387,18 @@ if __name__ == '__main__':
         default="all",
         type=str,
     )
+    parser.add_argument(
+        # '-f',
+        '--image-format', # args.image_format
+        help=f'image format for the page images. default: {DEFAULT_IMAGE_FORMAT}. example: webp',
+        default=DEFAULT_IMAGE_FORMAT,
+        type=str,
+    )
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
     assert 1 <= args.quality <= 100
+    assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
 
     process_files_hocr2epubfxl(
         args.infiles,
@@ -348,4 +406,5 @@ if __name__ == '__main__':
         args.scale,
         args.quality,
         args.pages,
+        args.image_format,
     )
