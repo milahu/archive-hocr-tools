@@ -23,6 +23,7 @@ from hocr.text import hocr_page_text
 from hocr.text import hocr_word_data_bbox
 
 from PIL import Image
+from tqdm import tqdm
 
 
 hocrfile_extensions = ("hocr", "html")
@@ -262,7 +263,10 @@ def process_files_hocr2epubfxl(
             scale_factor,
             compress_quality,
         )
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with (
+                ProcessPoolExecutor(max_workers=max_workers) as executor,
+                tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
+            ):
             futures = {executor.submit(process_page, f, *const_args): i for i, f in enumerate(hocrfiles)}
 
             for future in as_completed(futures):
@@ -277,6 +281,7 @@ def process_files_hocr2epubfxl(
                     zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
                     svg_path_list.append(svg_path)
                     next_page += 1
+                    progress_bar.update(1)
 
         reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
         reader_html_data = reader_html_data.replace(
