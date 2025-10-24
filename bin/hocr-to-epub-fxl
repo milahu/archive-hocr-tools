@@ -152,6 +152,7 @@ def process_files_hocr2epubfxl(
         output_path,
         scale_factor=1.0,
         compress_quality=1,
+        selected_pages="all",
     ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
@@ -165,6 +166,19 @@ def process_files_hocr2epubfxl(
             raise ValueError(f"Unsupported file extension {f!r}")
     if imgfiles and len(imgfiles) != len(hocrfiles):
         raise ValueError("Mismatch: HOCR files and images count differ")
+
+    if selected_pages != "all":
+        m = re.fullmatch("([0-9]*)-([0-9]*)", selected_pages)
+        if not m:
+            raise ValueError(f"failed to parse selected_pages {selected_pages!r}")
+        min_page, max_page = m.groups()
+        if min_page == "": min_page = 1
+        if max_page == "": max_page = len(hocrfiles)
+        min_page = int(min_page)
+        max_page = int(max_page)
+        hocrfiles = hocrfiles[(min_page - 1):max_page]
+        if imgfiles:
+            imgfiles = imgfiles[(min_page - 1):max_page]
 
     # --- create ZIP archive ---
     with zipfile.ZipFile(output_path, "w") as zf:
@@ -311,6 +325,13 @@ if __name__ == '__main__':
         default=1,
         type=int,
     )
+    parser.add_argument(
+        '-P',
+        '--pages', # args.pages
+        help='select pages. default: all. example: 1-4',
+        default="all",
+        type=str,
+    )
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
@@ -321,4 +342,5 @@ if __name__ == '__main__':
         args.output,
         args.scale,
         args.quality,
+        args.pages,
     )
