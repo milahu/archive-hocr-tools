@@ -52,12 +52,21 @@ assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_fo
 
 WEBP_METHOD = 6
 
+DEFAULT_TEXT_FORMAT = "html"
+TEXT_FORMAT_LIST = ["html", "svg"]
+
+media_type_by_text_format = {
+    "html": "application/xhtml+xml",
+    "svg": "image/svg+xml",
+}
+
 # --- top-level page processor ---
 def process_page(
         hocrfile,
         scale_factor=1.0,
         compress_quality=1,
         image_format="avif",
+        text_format="svg",
     ):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     assert PIL.features.check(image_format), f"PIL does not support image_format {image_format!r}"
@@ -138,6 +147,39 @@ def process_page(
             bbox = (x1, y1, x2, y2)
             return bbox
 
+    epub_page_image_path = f"images/{page_base}.{image_format}"
+
+    get_text_data_by_text_format = {
+        "html": get_text_data_html,
+        "svg": get_text_data_svg,
+    }
+    get_text_data = get_text_data_by_text_format[text_format]
+    svg_data = get_text_data(
+        hocrfile,
+        page,
+        page_w,
+        page_h,
+        scale_bbox,
+        epub_page_image_path,
+    )
+    del page
+
+    svg_path = f"OEBPS/{page_base}.{text_format}"
+    img_path = f"OEBPS/images/{page_base}.{image_format}"
+
+    # --- return file paths & data ---
+    return (svg_path, svg_data, img_path, img_data)
+
+
+def get_text_data_svg(
+        hocrfile,
+        page,
+        page_w,
+        page_h,
+        scale_bbox,
+        epub_page_image_path,
+    ):
+
     # --- build SVG ---
     svg_buf = io.StringIO()
     svg_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
@@ -156,7 +198,7 @@ def process_page(
     svg_buf.write('</style>\n')
     svg_buf.write(
         f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
-        f'preserveAspectRatio="none" xlink:href="images/{page_base}.{image_format}"/>\n'
+        f'preserveAspectRatio="none" xlink:href="{epub_page_image_path}"/>\n'
     )
 
     for paragraph in page:
@@ -177,15 +219,123 @@ def process_page(
                     f'textLength="{w}" lengthAdjust="spacingAndGlyphs">{text}</tspan>\n'
                 )
             svg_buf.write('</text>\n')
-    del page
     svg_buf.write('</svg>\n')
     svg_data = svg_buf.getvalue().encode("utf-8")
     del svg_buf
-    svg_path = f"OEBPS/{page_base}.svg"
-    img_path = f"OEBPS/images/{page_base}.{image_format}"
+    return svg_data
 
-    # --- return file paths & data ---
-    return (svg_path, svg_data, img_path, img_data)
+
+def get_text_data_html(
+        hocrfile,
+        page,
+        page_w,
+        page_h,
+        scale_bbox,
+        epub_page_image_path,
+    ):
+
+    # --- build HTML ---
+    html_buf = io.StringIO()
+    html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+    html_buf.write(
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN\n'
+        ' "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">\n'
+    )
+    # TODO set metadata: lang
+    html_buf.write(f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
+    html_buf.write('<head>\n')
+    html_buf.write('<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />\n')
+    # TODO set metadata: title
+    html_buf.write(f'<title>EPUB reader</title>\n')
+
+    html_buf.write('<style type="text/css">\n')
+
+    html_buf.write('html, body {\n')
+    html_buf.write(' margin: 0;\n')
+    html_buf.write(' padding: 0;\n')
+    html_buf.write(' width: 100%;\n')
+    html_buf.write(' height: 100%;\n')
+    html_buf.write('}\n')
+
+    html_buf.write('main {\n')
+    # html_buf.write(' outline: solid 10px red;\n') # debug # ok
+    html_buf.write(' width: 100%;\n') # fit iframe width
+    # html_buf.write(' overflow: hidden;\n') # no scrollbars
+    html_buf.write('}\n')
+
+    html_buf.write('section {\n')
+    # FIXME scale to fit width (at 100% browser zoom level)
+    # html_buf.write(' outline: solid 10px green;\n') # debug
+    html_buf.write(' position: relative;\n')
+    html_buf.write(f' width: {page_w}px;\n')
+    html_buf.write(f' height: {page_h}px;\n')
+    html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
+    html_buf.write(f' background-size: {page_w}px {page_h}px;\n')
+    # html_buf.write(' background-size: 100% 100%;\n')
+    html_buf.write(' transform-origin: top left;\n')
+    # not working. we cannot use 100vw here. this would require javascript
+    # html_buf.write(f' transform: scale(calc(100% / {page_w} * 100vw));\n') # scale to fit width
+    # html_buf.write(f' transform: scale(calc(100vw / {page_w}));\n') # scale to fit width
+    # html_buf.write(f' transform: scale(calc(100% / {page_h} * 100vh));\n') # scale to fit height
+    # html_buf.write(f' transform: scale(0.89);\n') # scale to fit width
+    html_buf.write(' margin: auto;\n') # center the page horizontally
+    html_buf.write('}\n')
+
+    # span = word
+    html_buf.write('span {\n')
+    html_buf.write(' position: absolute;\n')
+    html_buf.write(' color: transparent;\n')
+    # html_buf.write(' font-family: sans-serif;\n')
+    html_buf.write(' font-family: monospace;\n') # simplify scale_w calculation
+    html_buf.write(' white-space: nowrap;\n')
+    html_buf.write(' line-height: 1;\n')
+    html_buf.write(' transform-origin: left center;\n')
+    html_buf.write('\n')
+    html_buf.write('}\n')
+
+    # invert image colors in dark mode
+    html_buf.write('@media (prefers-color-scheme: dark) {\n')
+    html_buf.write(' section { filter: invert(); }\n')
+    html_buf.write('}\n')
+
+    html_buf.write('</style>\n')
+
+    html_buf.write('</head>\n')
+    html_buf.write('<body>\n')
+    html_buf.write('<main>\n')
+    html_buf.write('<section>\n')
+
+    for paragraph in page:
+        last_line_idx = len(paragraph["lines"]) - 1
+        for line_idx, line in enumerate(paragraph["lines"]):
+            x1, y1, x2, y2 = scale_bbox(line["bbox"])
+            html_buf.write(f'<div>\n')
+            last_word_idx = len(line["words"]) - 1
+            for word_idx, word in enumerate(line["words"]):
+                x1, y1, x2, y2 = scale_bbox(word["bbox"])
+                w = x2 - x1
+                h = y2 - y1
+                # the monospace font characters have an aspect ratio of 6:10
+                # https://stackoverflow.com/a/19114963/10440128
+                w_char, h_char = 6, 10
+                scale_w = (w / w_char) / (h / h_char) / len(word["text"])
+                text = escape(word["text"])
+                if word_idx == last_word_idx: # last word in line
+                    text += "<br>"
+                    if line_idx == last_line_idx: # last line in paragraph
+                        text += "<br>"
+                else:
+                    # add spaces between words
+                    text += "&nbsp;"
+                html_buf.write(f'<span style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">{text}</span>\n')
+            html_buf.write('</div>\n')
+    html_buf.write('</section>\n')
+    html_buf.write('</main>\n')
+    html_buf.write('</body>\n')
+    html_buf.write('</html>\n')
+    html_data = html_buf.getvalue().encode("utf-8")
+    del html_buf
+    return html_data
 
 
 # --- check if path is an image ---
@@ -202,6 +352,7 @@ def process_files_hocr2epubfxl(
         compress_quality=1,
         selected_pages="all",
         image_format="avif",
+        text_format="svg",
     ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
@@ -250,8 +401,9 @@ def process_files_hocr2epubfxl(
         # --- prepare content.opf ---
         manifest_items, spine_items = [], []
         page_basenames = [os.path.splitext(os.path.basename(f))[0] for f in hocrfiles]
+        text_media_type = media_type_by_text_format[text_format]
         for i, base in enumerate(page_basenames):
-            manifest_items.append(f"<item id='page{i+1}' href='{base}.svg' media-type='image/svg+xml'/>")
+            manifest_items.append(f"<item id='page{i+1}' href='{base}.{text_format}' media-type='{text_media_type}'/>")
             spine_items.append(f"<itemref idref='page{i+1}'/>")
             manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{image_format}' media-type='image/{image_format}'/>")
 
@@ -297,7 +449,7 @@ def process_files_hocr2epubfxl(
             toc_ncx.append(
                 f'    <navPoint id="navPoint-{i+1}" playOrder="{i+1}">'
                 f'<navLabel><text>Page {i+1}</text></navLabel>'
-                f'<content src="{base}.svg"/></navPoint>'
+                f'<content src="{base}.{text_format}"/></navPoint>'
             )
         toc_ncx.append("  </navMap>\n</ncx>")
         zf.writestr("OEBPS/toc.ncx", "\n".join(toc_ncx))
@@ -316,6 +468,7 @@ def process_files_hocr2epubfxl(
             scale_factor,
             compress_quality,
             image_format,
+            text_format,
         )
         with (
                 ProcessPoolExecutor(max_workers=max_workers) as executor,
@@ -338,6 +491,7 @@ def process_files_hocr2epubfxl(
                     progress_bar.update(1)
 
         reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
+        # reader_html_data = importlib.resources.read_binary("hocr", f"data/{text_format}-ebook-reader.html")
         reader_html_data = reader_html_data.replace(
             b"const svgFiles = [ /* TODO */ ];",
             (
@@ -398,11 +552,19 @@ if __name__ == '__main__':
         default=DEFAULT_IMAGE_FORMAT,
         type=str,
     )
+    parser.add_argument(
+        # '-f',
+        '--text-format', # args.text_format
+        help=f'text format for the page images. default: {DEFAULT_TEXT_FORMAT}. values: {", ".join(TEXT_FORMAT_LIST)}',
+        default=DEFAULT_TEXT_FORMAT,
+        type=str,
+    )
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
     assert 1 <= args.quality <= 100
     assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
+    assert args.text_format in TEXT_FORMAT_LIST
 
     process_files_hocr2epubfxl(
         args.infiles,
@@ -411,4 +573,5 @@ if __name__ == '__main__':
         args.quality,
         args.pages,
         args.image_format,
+        args.text_format,
     )
