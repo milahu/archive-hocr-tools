@@ -25,6 +25,7 @@ from hocr.text import hocr_word_data_bbox
 import PIL.features
 from PIL import Image
 from tqdm import tqdm
+import psutil
 
 
 hocrfile_extensions = ("hocr", "html")
@@ -469,7 +470,7 @@ def process_files_hocr2epubfxl(
         next_page = 0
         page_results = {}
         svg_path_list = []
-        max_workers = os.cpu_count() # TODO expose CLI option
+        max_workers = psutil.cpu_count(logical=False) or 1 # TODO expose CLI option
         if image_format == "avif":
             # the avif encoder is multi-threaded already
             # TODO pass the original max_workers value to the avif encoder
