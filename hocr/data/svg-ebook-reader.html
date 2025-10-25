@@ -134,17 +134,6 @@
     return document.getElementById(index);
   }
 
-  function styleSVG(iframe) {
-    if (!iframe || !iframe.contentDocument) return;
-    const svg = iframe.contentDocument.querySelector('svg');
-    if (svg) {
-      svg.style.width = '100%';
-      svg.style.height = 'auto';
-      svg.style.display = 'block';
-      svg.style.margin = '0 auto';
-    }
-  }
-
   function loadPages() {
     let page1 = document.getElementById('page1');
     if (!page1) page1 = createIframe('page1');
@@ -168,12 +157,8 @@
       page1.src = leftIndex >= 0 ? svgFiles[leftIndex] : '';
       page2.src = rightIndex < totalPages ? svgFiles[rightIndex] : '';
 
-      page1.onload = () => styleSVG(page1);
-      page2.onload = () => styleSVG(page2);
-
     } else {
       page1.src = svgFiles[currentPage - 1] || '';
-      page1.onload = () => styleSVG(page1);
     }
 
     pageNumberInput.value = currentPage;
