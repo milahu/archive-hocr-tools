@@ -304,8 +304,9 @@ def get_text_data_html(
     # html_buf.write(' outline: solid 1px black;\n')
     # html_buf.write('}\n')
 
+    # div = line
     # span = word
-    html_buf.write('span {\n')
+    html_buf.write('div, span {\n')
     html_buf.write(' position: absolute;\n')
     html_buf.write(' color: transparent;\n')
     # html_buf.write(' font-family: sans-serif;\n')
