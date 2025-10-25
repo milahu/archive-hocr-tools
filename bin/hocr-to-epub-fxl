@@ -251,8 +251,8 @@ def get_text_data_html(
     html_buf = io.StringIO()
     html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
     html_buf.write(
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN\n'
-        ' "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">\n'
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"\n'
+        ' "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">\n'
     )
     # TODO set metadata: lang
     html_buf.write(f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
