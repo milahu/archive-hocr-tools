@@ -31,6 +31,7 @@
   #menu-bar > * {
     margin-left: 5px;
     margin-right: 5px;
+    font-size: 16px;
   }
 
   #menu-bar button {
@@ -40,6 +41,22 @@
   #menu-bar input {
     width: 50px;
     text-align: center;
+  }
+
+  #menu-bar button,
+  #menu-bar input,
+  #menu-bar > a {
+    display: inline-block;
+    padding: 5px 10px;
+    border: solid 1px #5b5b5b;
+    border-radius: 2px;
+    color: black;
+    text-decoration: none;
+    cursor: default;
+  }
+  #menu-bar button:hover,
+  #menu-bar > a:hover {
+    background: #e5e5e5;
   }
 
   #viewer {
@@ -82,6 +99,7 @@
   <input type="number" id="pageNumber" min="1" value="1">
   <span id="totalPages"></span>
   <button id="toggleMode">Two-Page Mode</button>
+  <a href="OEBPS/index.html">All Pages</a>
 </div>
 
 <div id="viewer" class="single-page">
