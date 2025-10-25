@@ -53,8 +53,10 @@ assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_fo
 
 WEBP_METHOD = 6
 
-DEFAULT_TEXT_FORMAT = "html"
-TEXT_FORMAT_LIST = ["html", "svg"]
+# only SVG supports searchable text with absolute word positions
+# https://stackoverflow.com/a/79799428/10440128
+DEFAULT_TEXT_FORMAT = "svg"
+TEXT_FORMAT_LIST = ["svg", "html"]
 
 media_type_by_text_format = {
     "html": "application/xhtml+xml",
