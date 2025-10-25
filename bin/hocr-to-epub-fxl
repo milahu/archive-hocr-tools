@@ -11,6 +11,7 @@ import argparse
 import mimetypes
 import zipfile
 import datetime
+import traceback
 from xml.sax.saxutils import escape
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import importlib.resources
@@ -169,6 +170,15 @@ def process_page(hocrfile, args):
 
     # --- return file paths & data ---
     return (svg_path, svg_data, img_path, img_data)
+
+
+def try_process_page(hocrfile, args):
+    "ensure all exceptions are caught and serialized safely back to the main process"
+    try:
+        return (True, process_page(hocrfile, args))
+    except Exception as e:
+        tb = traceback.format_exc()
+        return (False, (e, tb))
 
 
 def get_text_data_svg(
@@ -526,10 +536,16 @@ def process_files_hocr2epubfxl(args):
                     ProcessPoolExecutor(max_workers=max_workers) as executor,
                     tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
                 ):
-                futures = {executor.submit(process_page, f, args): i for i, f in enumerate(hocrfiles)}
+                futures = {executor.submit(try_process_page, f, args): i for i, f in enumerate(hocrfiles)}
                 for future in as_completed(futures):
                     idx = futures[future]
-                    page_results[idx] = future.result()
+                    ok, result = future.result()
+                    if not ok:
+                        executor.shutdown(cancel_futures=True)
+                        e, tb = result
+                        print(f"\nException in worker {idx}:\n{tb}")
+                        raise e
+                    page_results[idx] = result
                     # write pages in order as they become available
                     while next_page in page_results:
                         page_result = page_results.pop(next_page)
