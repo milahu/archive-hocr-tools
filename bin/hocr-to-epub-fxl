@@ -207,9 +207,12 @@ def get_text_data_svg(
         first_line = paragraph["lines"][0]
         x1, y1, x2, y2 = scale_bbox(first_line["bbox"])
         svg_buf.write(f'<text x="{x1}" y="{y1-1}" xml:space="preserve"> </text>\n')
+        if not args.text_svg_split_lines:
+            svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
         for line in paragraph["lines"]:
             x1, y1, x2, y2 = scale_bbox(line["bbox"])
-            svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
+            if args.text_svg_split_lines:
+                svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
             for word in line["words"]:
                 x1, y1, x2, y2 = scale_bbox(word["bbox"])
                 w = x2 - x1
@@ -220,6 +223,9 @@ def get_text_data_svg(
                     f'  <tspan x="{x1}" y="{text_y}" font-size="{h}px" '
                     f'textLength="{w}" lengthAdjust="spacingAndGlyphs">{text}</tspan>\n'
                 )
+            if args.text_svg_split_lines:
+                svg_buf.write('</text>\n')
+        if not args.text_svg_split_lines:
             svg_buf.write('</text>\n')
     svg_buf.write('</svg>\n')
     svg_data = svg_buf.getvalue().encode("utf-8")
@@ -588,6 +594,14 @@ if __name__ == '__main__':
     parser.add_argument(
         '--text-html-join-words', # args.text_html_join_words
         help=f'join words of each line to make text searchable across words in html',
+        action='store_true',
+    )
+    parser.add_argument(
+        '--text-svg-split-lines', # args.text_svg_split_lines
+        help=(
+            'split lines of each paragraph to preserve the fixed layout in svg.'
+            ' note: this breaks text search across lines in a paragraph.'
+        ),
         action='store_true',
     )
     parser.add_argument(
