@@ -69,6 +69,7 @@ def process_page(
         image_format="avif",
         text_format="svg",
         doc_title="",
+        text_html_join_words=False,
     ):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     assert PIL.features.check(image_format), f"PIL does not support image_format {image_format!r}"
@@ -164,6 +165,7 @@ def process_page(
         scale_bbox,
         epub_page_image_path,
         doc_title,
+        text_html_join_words,
     )
     del page
 
@@ -182,6 +184,7 @@ def get_text_data_svg(
         scale_bbox,
         epub_page_image_path,
         doc_title,
+        text_html_join_words,
     ):
 
     # --- build SVG ---
@@ -242,6 +245,7 @@ def get_text_data_html(
         scale_bbox,
         epub_page_image_path,
         doc_title,
+        text_html_join_words,
     ):
 
     # --- build HTML ---
@@ -333,6 +337,26 @@ def get_text_data_html(
         last_line_idx = len(paragraph["lines"]) - 1
         for line_idx, line in enumerate(paragraph["lines"]):
             x1, y1, x2, y2 = scale_bbox(line["bbox"])
+            if text_html_join_words:
+                # note: this is lossy. word positions are lost
+                w = x2 - x1
+                h = y2 - y1
+                # the monospace font characters have an aspect ratio of 6:10
+                # https://stackoverflow.com/a/19114963/10440128
+                w_char, h_char = 6, 10
+                len_line = sum([len(word["text"]) + 1 for word in line["words"]]) - 1
+                scale_w = (w / w_char) / (h / h_char) / len_line
+                html_buf.write(f'<div style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">')
+                for word_idx, word in enumerate(line["words"]):
+                    text = escape(word["text"])
+                    if word_idx > 0:
+                        html_buf.write(" ")
+                    html_buf.write(text)
+                if line_idx == last_line_idx: # last line in paragraph
+                    html_buf.write('<br/>')
+                html_buf.write('<br/>')
+                html_buf.write('</div>\n')
+                continue
             html_buf.write(f'<div>\n')
             last_word_idx = len(line["words"]) - 1
             for word_idx, word in enumerate(line["words"]):
@@ -378,6 +402,7 @@ def process_files_hocr2epubfxl(
         image_format="avif",
         text_format="svg",
         doc_title="",
+        text_html_join_words=False,
     ):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
@@ -495,6 +520,7 @@ def process_files_hocr2epubfxl(
             image_format,
             text_format,
             doc_title,
+            text_html_join_words,
         )
         with (
                 ProcessPoolExecutor(max_workers=max_workers) as executor,
@@ -589,6 +615,11 @@ if __name__ == '__main__':
         type=str,
     )
     parser.add_argument(
+        '--text-html-join-words', # args.text_html_join_words
+        help=f'join words of each line to make text searchable across words in html',
+        action='store_true',
+    )
+    parser.add_argument(
         '--doc-title', # args.doc_title
         help=f'document title',
         default="",
@@ -610,4 +641,5 @@ if __name__ == '__main__':
         args.image_format,
         args.text_format,
         args.doc_title,
+        args.text_html_join_words,
     )
