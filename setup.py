@@ -29,6 +29,7 @@ setup(name='archive-hocr-tools',
                'bin/hocr-flatten-pages', 'bin/hocr-confidence-filter',
                'bin/hocr-to-epub', 'bin/pdf-to-hocr',
                'bin/hocr-to-epub-fxl',
+               'bin/hocr-svg',
                'bin/hocr-pagenumbers', 'bin/hocr-to-daisy'],
       classifiers=[
           'Development Status :: 3 - Alpha',
