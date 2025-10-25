@@ -119,8 +119,7 @@ def process_page(hocrfile, args):
             im_save_kwargs["subsampling"] = "4:4:4"
             # speed trades off encoding time vs. quality. 0–10. lower is better.
             im_save_kwargs["speed"] = 0
-            # TODO pass the original max_workers value to the avif encoder
-            # im_save_kwargs["max_threads"] = max_workers
+            im_save_kwargs["max_threads"] = args.jobs
         elif args.image_format == "webp":
             im_save_kwargs["format"] = "WEBP"
             im_save_kwargs["method"] = WEBP_METHOD
@@ -519,7 +518,6 @@ def process_files_hocr2epubfxl(args):
         max_workers = args.jobs
         if args.image_format == "avif":
             # the avif encoder is multi-threaded already
-            # TODO pass the original max_workers value to the avif encoder
             max_workers = 1
         if max_workers == 1:
             with (
