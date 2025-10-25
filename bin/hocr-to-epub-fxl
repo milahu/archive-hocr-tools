@@ -498,36 +498,44 @@ def process_files_hocr2epubfxl(args):
         zf.writestr("OEBPS/toc.ncx", "\n".join(toc_ncx))
 
         # --- process pages in parallel and stream directly to ZIP ---
-        next_page = 0
-        page_results = {}
+        def process_page_result(page_result):
+            svg_path, svg_data, img_path, img_data = page_result
+            zf.writestr(svg_path, svg_data, compress_type=zipfile.ZIP_DEFLATED)
+            zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
+            svg_path_list.append(svg_path)
+            svg_data_list.append(svg_data)
         svg_path_list = []
         svg_data_list = []
         max_workers = args.jobs
         if args.image_format == "avif":
             # the avif encoder is multi-threaded already
             # TODO pass the original max_workers value to the avif encoder
-            # TODO dont use ProcessPoolExecutor when max_workers == 1
             max_workers = 1
-        with (
-                ProcessPoolExecutor(max_workers=max_workers) as executor,
-                tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
-            ):
-            futures = {executor.submit(process_page, f, args): i for i, f in enumerate(hocrfiles)}
-
-            for future in as_completed(futures):
-                idx = futures[future]
-                svg_path, svg_data, img_path, img_data = future.result()
-                page_results[idx] = (svg_path, svg_data, img_path, img_data)
-
-                # write pages in order as they become available
-                while next_page in page_results:
-                    svg_path, svg_data, img_path, img_data = page_results.pop(next_page)
-                    zf.writestr(svg_path, svg_data, compress_type=zipfile.ZIP_DEFLATED)
-                    zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
-                    svg_path_list.append(svg_path)
-                    svg_data_list.append(svg_data)
-                    next_page += 1
+        if max_workers == 1:
+            with (
+                    tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
+                ):
+                for idx, hocrfile in enumerate(hocrfiles):
+                    page_result = process_page(hocrfile, args)
+                    process_page_result(page_result)
                     progress_bar.update(1)
+        else:
+            next_page = 0
+            page_results = {}
+            with (
+                    ProcessPoolExecutor(max_workers=max_workers) as executor,
+                    tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
+                ):
+                futures = {executor.submit(process_page, f, args): i for i, f in enumerate(hocrfiles)}
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    page_results[idx] = future.result()
+                    # write pages in order as they become available
+                    while next_page in page_results:
+                        page_result = page_results.pop(next_page)
+                        process_page_result(page_result)
+                        next_page += 1
+                        progress_bar.update(1)
 
         # join all pages
         html_path = "OEBPS/index.html"
