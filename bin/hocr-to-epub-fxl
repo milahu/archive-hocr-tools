@@ -65,6 +65,7 @@ media_type_by_text_format = {
 }
 
 default_max_workers = psutil.cpu_count(logical=False) or 1
+max_max_workers = psutil.cpu_count() or 1 # number of CPU threads
 
 # --- top-level page processor ---
 def process_page(hocrfile, args):
@@ -726,7 +727,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--jobs', # args.jobs
-        help=f'run N jobs in parallel. default: {default_max_workers}',
+        help=f'run N jobs in parallel. default: {default_max_workers}. max: {max_max_workers}',
         default=default_max_workers,
         type=int,
     )
@@ -736,5 +737,6 @@ if __name__ == '__main__':
     assert 1 <= args.quality <= 100
     assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
     assert args.text_format in TEXT_FORMAT_LIST
+    assert 1 <= args.jobs <= max_max_workers, f"jobs must be between 1 and {max_max_workers}"
 
     process_files_hocr2epubfxl(args)
