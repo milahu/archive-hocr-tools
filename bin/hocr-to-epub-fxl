@@ -197,8 +197,10 @@ def get_text_data_svg(
     )
     svg_buf.write('<style>\n')
     svg_buf.write('text, tspan { dominant-baseline: mathematical; fill: transparent; }\n')
-    # invert image colors in dark mode
+    svg_buf.write('svg { background: #e2e2e2; }\n') # 90% white
+    # invert colors in dark mode
     svg_buf.write('@media (prefers-color-scheme: dark) {\n')
+    svg_buf.write(' svg { background: #1b1b1b; }\n') # 10% white
     svg_buf.write(' image { filter: invert(); }\n')
     svg_buf.write('}\n')
     svg_buf.write('</style>\n')
@@ -546,7 +548,7 @@ def process_files_hocr2epubfxl(args):
         html_buf.write(b' padding: 0;\n')
         html_buf.write(b'}\n')
         html_buf.write(b'body {\n')
-        html_buf.write(b' background: gray;\n')
+        html_buf.write(b' background: #e2e2e2;\n') # 90% white
         html_buf.write(b' display: flex;\n')
         html_buf.write(b' flex-direction: column;\n')
         html_buf.write(b' align-items: center;\n')
@@ -557,6 +559,10 @@ def process_files_hocr2epubfxl(args):
         # html_buf.write(b' border-bottom: solid 1px gray;\n')
         # https://stackoverflow.com/a/18841365/10440128
         html_buf.write(b' box-shadow: 0 -1px 0 gray;\n') # outline-bottom
+        html_buf.write(b'}\n')
+        # invert colors in dark mode
+        html_buf.write(b'@media (prefers-color-scheme: dark) {\n')
+        html_buf.write(b' body { background: #1b1b1b; }\n') # 10% white
         html_buf.write(b'}\n')
         html_buf.write(b'@page {\n')
         html_buf.write(b' size: A4 portrait;\n')
