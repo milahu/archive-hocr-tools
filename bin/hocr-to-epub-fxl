@@ -267,6 +267,14 @@ def get_text_data_html(
     html_buf.write(' width: 100%;\n')
     html_buf.write(' height: 100%;\n')
     html_buf.write('}\n')
+    html_buf.write('body {\n')
+    html_buf.write(' background: gray;\n')
+    html_buf.write('}\n')
+    html_buf.write('@media print {\n')
+    html_buf.write(' body {\n')
+    html_buf.write('  background: none;\n')
+    html_buf.write(' }\n')
+    html_buf.write('}\n')
 
     html_buf.write('main {\n')
     # html_buf.write(' outline: solid 10px red;\n') # debug # ok
@@ -274,6 +282,7 @@ def get_text_data_html(
     # html_buf.write(' overflow: hidden;\n') # no scrollbars
     html_buf.write('}\n')
 
+    # section = page
     html_buf.write('section {\n')
     # FIXME scale to fit width (at 100% browser zoom level)
     # html_buf.write(' outline: solid 10px green;\n') # debug
@@ -291,6 +300,9 @@ def get_text_data_html(
     # html_buf.write(f' transform: scale(0.89);\n') # scale to fit width
     html_buf.write(' margin: auto;\n') # center the page horizontally
     html_buf.write('}\n')
+    # html_buf.write('section:hover {\n')
+    # html_buf.write(' outline: solid 1px black;\n')
+    # html_buf.write('}\n')
 
     # span = word
     html_buf.write('span {\n')
