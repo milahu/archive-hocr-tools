@@ -63,6 +63,8 @@ media_type_by_text_format = {
     "svg": "image/svg+xml",
 }
 
+default_max_workers = psutil.cpu_count(logical=False) or 1
+
 # --- top-level page processor ---
 def process_page(hocrfile, args):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
@@ -500,7 +502,7 @@ def process_files_hocr2epubfxl(args):
         page_results = {}
         svg_path_list = []
         svg_data_list = []
-        max_workers = psutil.cpu_count(logical=False) or 1 # TODO expose CLI option
+        max_workers = args.jobs
         if args.image_format == "avif":
             # the avif encoder is multi-threaded already
             # TODO pass the original max_workers value to the avif encoder
@@ -699,6 +701,12 @@ if __name__ == '__main__':
         help=f'document title',
         default="",
         type=str,
+    )
+    parser.add_argument(
+        '--jobs', # args.jobs
+        help=f'run N jobs in parallel. default: {default_max_workers}',
+        default=default_max_workers,
+        type=int,
     )
     args = parser.parse_args()
 
