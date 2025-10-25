@@ -497,6 +497,7 @@ def process_files_hocr2epubfxl(args):
         next_page = 0
         page_results = {}
         svg_path_list = []
+        svg_data_list = []
         max_workers = psutil.cpu_count(logical=False) or 1 # TODO expose CLI option
         if args.image_format == "avif":
             # the avif encoder is multi-threaded already
@@ -520,9 +521,88 @@ def process_files_hocr2epubfxl(args):
                     zf.writestr(svg_path, svg_data, compress_type=zipfile.ZIP_DEFLATED)
                     zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
                     svg_path_list.append(svg_path)
+                    svg_data_list.append(svg_data)
                     next_page += 1
                     progress_bar.update(1)
 
+        # join all pages
+        html_path = "OEBPS/index.html"
+        html_buf = io.BytesIO()
+        # EPUB3 supports HTML5
+        # https://validator.w3.org/nu/#textarea
+        html_buf.write(b'<!DOCTYPE html>\n')
+        # TODO set metadata: lang
+        html_buf.write(b'<html lang="en">\n')
+        html_buf.write(b"<head>\n")
+        html_buf.write(b'<meta charset="utf-8">\n')
+        # set metadata: title
+        html_buf.write(b'<title>')
+        html_buf.write(escape(args.doc_title).encode("utf8"))
+        html_buf.write(b'</title>\n')
+        html_buf.write(b'<meta name="generator" content="hocr-to-epub-fxl">\n')
+        html_buf.write(b'<style>\n')
+        html_buf.write(b'html, body {\n')
+        html_buf.write(b' margin: 0;\n')
+        html_buf.write(b' padding: 0;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'body {\n')
+        html_buf.write(b' background: gray;\n')
+        html_buf.write(b' display: flex;\n')
+        html_buf.write(b' flex-direction: column;\n')
+        html_buf.write(b' align-items: center;\n')
+        html_buf.write(b' align-content: center;\n')
+        html_buf.write(b' background: gray;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'svg {\n')
+        # html_buf.write(b' border-bottom: solid 1px gray;\n')
+        # https://stackoverflow.com/a/18841365/10440128
+        html_buf.write(b' box-shadow: 0 -1px 0 gray;\n') # outline-bottom
+        html_buf.write(b'}\n')
+        html_buf.write(b'@page {\n')
+        html_buf.write(b' size: A4 portrait;\n')
+        html_buf.write(b' margin: 0;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'@media print {\n')
+        html_buf.write(b' body {\n')
+        html_buf.write(b'  background: none;\n')
+        html_buf.write(b' }\n')
+        html_buf.write(b" svg {\n")
+        html_buf.write(b'  box-shadow: none;\n')
+        html_buf.write(b'  display: block;\n')
+        # html_buf.write(b'  max-width: 100%;\n')
+        # html_buf.write(b'  max-height: 95vh;\n')
+        html_buf.write(b'  max-width: 100vw;\n')
+        html_buf.write(b'  max-height: 100vh;\n')
+        html_buf.write(b'  width: auto;\n')
+        html_buf.write(b'  height: auto;\n')
+        html_buf.write(b'  margin: 0 auto;\n')
+        html_buf.write(b'  page-break-before: always;\n')
+        html_buf.write(b'  break-before: page;\n')
+        html_buf.write(b'  box-sizing: border-box;\n')
+        html_buf.write(b" }\n")
+        html_buf.write(b" svg:first-of-type {\n")
+        html_buf.write(b'  page-break-before: auto;\n')
+        html_buf.write(b'  break-before: auto;\n')
+        html_buf.write(b'\n')
+        html_buf.write(b" }\n")
+        html_buf.write(b"}\n")
+        html_buf.write(b"</style>\n")
+        html_buf.write(b"</head>\n")
+        html_buf.write(b"<body>\n")
+        xml_header = b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        for svg_idx, svg_path in enumerate(svg_path_list):
+            html_buf.write(b"<!-- " + os.path.basename(svg_path).encode("utf8") + b"-->\n")
+            svg_data = svg_data_list[svg_idx]
+            # svg_data = svg_data.replace(b'xlink:href="images/', b'xlink:href="OEBPS/images/')
+            if svg_data.startswith(xml_header):
+                svg_data = svg_data[len(xml_header):]
+            html_buf.write(svg_data)
+        html_buf.write(b"</body>\n")
+        html_buf.write(b"</html>\n")
+        html_data = html_buf.getvalue()
+        zf.writestr(html_path, html_data, compress_type=zipfile.ZIP_DEFLATED)
+
+        # reader: split pages view
         reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
         # reader_html_data = importlib.resources.read_binary("hocr", f"data/{args.text_format}-ebook-reader.html")
         reader_html_data = reader_html_data.replace(
