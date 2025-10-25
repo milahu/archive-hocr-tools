@@ -62,17 +62,9 @@ media_type_by_text_format = {
 }
 
 # --- top-level page processor ---
-def process_page(
-        hocrfile,
-        scale_factor=1.0,
-        compress_quality=1,
-        image_format="avif",
-        text_format="svg",
-        doc_title="",
-        text_html_join_words=False,
-    ):
+def process_page(hocrfile, args):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
-    assert PIL.features.check(image_format), f"PIL does not support image_format {image_format!r}"
+    assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
     # --- parse HOCR ---
     for page_elem in hocr_page_iterator(hocrfile):
         page = hocr_page_to_word_data(page_elem)
@@ -87,7 +79,7 @@ def process_page(
         raise ValueError(f"Missing image for {hocrfile}")
 
     page_base = os.path.splitext(os.path.basename(hocrfile))[0]
-    cached_page_image_path = f"{page_image_path}.q{compress_quality}.s{scale_factor}.{image_format}"
+    cached_page_image_path = f"{page_image_path}.q{args.quality}.s{args.scale}.{args.image_format}"
 
     # --- check image cache ---
     if os.path.exists(cached_page_image_path):
@@ -105,17 +97,17 @@ def process_page(
         page_w, page_h = im.size
         if im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
-        if scale_factor != 1:
-            page_w = round(page_w * scale_factor)
-            page_h = round(page_h * scale_factor)
+        if args.scale != 1:
+            page_w = round(page_w * args.scale)
+            page_h = round(page_h * args.scale)
             im = im.resize((page_w, page_h), resample=Image.LANCZOS)
         buf = io.BytesIO()
         im_save_kwargs = dict(
-            quality=compress_quality,
+            quality=args.quality,
             lossless=False,
             optimize=True,
         )
-        if image_format == "avif":
+        if args.image_format == "avif":
             im_save_kwargs["format"] = "AVIF"
             # keep full color resolution
             # prevent color bleeding around text
@@ -124,11 +116,11 @@ def process_page(
             im_save_kwargs["speed"] = 0
             # TODO pass the original max_workers value to the avif encoder
             # im_save_kwargs["max_threads"] = max_workers
-        elif image_format == "webp":
+        elif args.image_format == "webp":
             im_save_kwargs["format"] = "WEBP"
             im_save_kwargs["method"] = WEBP_METHOD
         else:
-            raise ValueError(f"unknown image format {image_format!r}")
+            raise ValueError(f"unknown image format {args.image_format!r}")
         im.save(buf, **im_save_kwargs)
         img_data = buf.getvalue()
         del buf
@@ -137,26 +129,26 @@ def process_page(
         im.close()
         del im
 
-    if scale_factor == 1:
+    if args.scale == 1:
         def scale_bbox(bbox):
             return bbox # noop
     else:
         def scale_bbox(bbox):
             x1, y1, x2, y2 = bbox
-            x1 = x1 * scale_factor
-            x2 = x2 * scale_factor
-            y1 = y1 * scale_factor
-            y2 = y2 * scale_factor
+            x1 = x1 * args.scale
+            x2 = x2 * args.scale
+            y1 = y1 * args.scale
+            y2 = y2 * args.scale
             bbox = (x1, y1, x2, y2)
             return bbox
 
-    epub_page_image_path = f"images/{page_base}.{image_format}"
+    epub_page_image_path = f"images/{page_base}.{args.image_format}"
 
     get_text_data_by_text_format = {
         "html": get_text_data_html,
         "svg": get_text_data_svg,
     }
-    get_text_data = get_text_data_by_text_format[text_format]
+    get_text_data = get_text_data_by_text_format[args.text_format]
     svg_data = get_text_data(
         hocrfile,
         page,
@@ -164,13 +156,12 @@ def process_page(
         page_h,
         scale_bbox,
         epub_page_image_path,
-        doc_title,
-        text_html_join_words,
+        args,
     )
     del page
 
-    svg_path = f"OEBPS/{page_base}.{text_format}"
-    img_path = f"OEBPS/images/{page_base}.{image_format}"
+    svg_path = f"OEBPS/{page_base}.{args.text_format}"
+    img_path = f"OEBPS/images/{page_base}.{args.image_format}"
 
     # --- return file paths & data ---
     return (svg_path, svg_data, img_path, img_data)
@@ -183,8 +174,7 @@ def get_text_data_svg(
         page_h,
         scale_bbox,
         epub_page_image_path,
-        doc_title,
-        text_html_join_words,
+        args,
     ):
 
     # --- build SVG ---
@@ -244,8 +234,7 @@ def get_text_data_html(
         page_h,
         scale_bbox,
         epub_page_image_path,
-        doc_title,
-        text_html_join_words,
+        args,
     ):
 
     # --- build HTML ---
@@ -260,7 +249,7 @@ def get_text_data_html(
     html_buf.write('<head>\n')
     html_buf.write('<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />\n')
     # set metadata: title
-    html_buf.write(f'<title>{escape(doc_title)} ({os.path.basename(hocrfile)})</title>\n')
+    html_buf.write(f'<title>{escape(args.doc_title)} ({os.path.basename(hocrfile)})</title>\n')
     html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
 
     html_buf.write('<style type="text/css">\n')
@@ -337,7 +326,7 @@ def get_text_data_html(
         last_line_idx = len(paragraph["lines"]) - 1
         for line_idx, line in enumerate(paragraph["lines"]):
             x1, y1, x2, y2 = scale_bbox(line["bbox"])
-            if text_html_join_words:
+            if args.text_html_join_words:
                 # note: this is lossy. word positions are lost
                 w = x2 - x1
                 h = y2 - y1
@@ -393,20 +382,10 @@ def is_image_path(path):
 
 
 # --- main processor ---
-def process_files_hocr2epubfxl(
-        infiles,
-        output_path,
-        scale_factor=1.0,
-        compress_quality=1,
-        selected_pages="all",
-        image_format="avif",
-        text_format="svg",
-        doc_title="",
-        text_html_join_words=False,
-    ):
+def process_files_hocr2epubfxl(args):
     # separate HOCR + images
     hocrfiles, imgfiles = [], []
-    for f in infiles:
+    for f in args.infiles:
         ext = os.path.splitext(f)[1].lower().lstrip(".")
         if ext in hocrfile_extensions:
             hocrfiles.append(f)
@@ -417,10 +396,10 @@ def process_files_hocr2epubfxl(
     if imgfiles and len(imgfiles) != len(hocrfiles):
         raise ValueError("Mismatch: HOCR files and images count differ")
 
-    if selected_pages != "all":
-        m = re.fullmatch("([0-9]*)-([0-9]*)", selected_pages)
+    if args.pages != "all":
+        m = re.fullmatch("([0-9]*)-([0-9]*)", args.pages)
         if not m:
-            raise ValueError(f"failed to parse selected_pages {selected_pages!r}")
+            raise ValueError(f"failed to parse args.pages {args.pages!r}")
         min_page, max_page = m.groups()
         if min_page == "": min_page = 1
         if max_page == "": max_page = len(hocrfiles)
@@ -431,7 +410,7 @@ def process_files_hocr2epubfxl(
             imgfiles = imgfiles[(min_page - 1):max_page]
 
     # --- create ZIP archive ---
-    with zipfile.ZipFile(output_path, "w") as zf:
+    with zipfile.ZipFile(args.output, "w") as zf:
         # mimetype must be first and uncompressed
         zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
 
@@ -451,11 +430,11 @@ def process_files_hocr2epubfxl(
         # --- prepare content.opf ---
         manifest_items, spine_items = [], []
         page_basenames = [os.path.splitext(os.path.basename(f))[0] for f in hocrfiles]
-        text_media_type = media_type_by_text_format[text_format]
+        text_media_type = media_type_by_text_format[args.text_format]
         for i, base in enumerate(page_basenames):
-            manifest_items.append(f"<item id='page{i+1}' href='{base}.{text_format}' media-type='{text_media_type}'/>")
+            manifest_items.append(f"<item id='page{i+1}' href='{base}.{args.text_format}' media-type='{text_media_type}'/>")
             spine_items.append(f"<itemref idref='page{i+1}'/>")
-            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{image_format}' media-type='image/{image_format}'/>")
+            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{args.image_format}' media-type='image/{args.image_format}'/>")
 
         content_opf = (
             "<?xml version='1.0' encoding='utf-8'?>\n"
@@ -466,7 +445,7 @@ def process_files_hocr2epubfxl(
             ">\n"
             "  <metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
             # set metadata: title
-            f"    <dc:title>{escape(doc_title)}</dc:title>\n"
+            f"    <dc:title>{escape(args.doc_title)}</dc:title>\n"
             # "    <dc:language>en</dc:language>\n"
             # f"    <dc:identifier id='BookId'>urn:uuid:{datetime.datetime.now(datetime.UTC).timestamp()}</dc:identifier>\n"
             "    <dc:creator>hocr-to-epub-fxl</dc:creator>\n"
@@ -492,14 +471,14 @@ def process_files_hocr2epubfxl(
             # "   <meta name='dtb:uid' content='BookId'/>\n"
             "  </head>\n"
             # set metadata: title
-            f"  <docTitle><text>{escape(doc_title)}</text></docTitle>\n"
+            f"  <docTitle><text>{escape(args.doc_title)}</text></docTitle>\n"
             "  <navMap>\n"
         ]
         for i, base in enumerate(page_basenames):
             toc_ncx.append(
                 f'    <navPoint id="navPoint-{i+1}" playOrder="{i+1}">'
                 f'<navLabel><text>Page {i+1}</text></navLabel>'
-                f'<content src="{base}.{text_format}"/></navPoint>'
+                f'<content src="{base}.{args.text_format}"/></navPoint>'
             )
         toc_ncx.append("  </navMap>\n</ncx>")
         zf.writestr("OEBPS/toc.ncx", "\n".join(toc_ncx))
@@ -509,24 +488,16 @@ def process_files_hocr2epubfxl(
         page_results = {}
         svg_path_list = []
         max_workers = psutil.cpu_count(logical=False) or 1 # TODO expose CLI option
-        if image_format == "avif":
+        if args.image_format == "avif":
             # the avif encoder is multi-threaded already
             # TODO pass the original max_workers value to the avif encoder
             # TODO dont use ProcessPoolExecutor when max_workers == 1
             max_workers = 1
-        const_args = (
-            scale_factor,
-            compress_quality,
-            image_format,
-            text_format,
-            doc_title,
-            text_html_join_words,
-        )
         with (
                 ProcessPoolExecutor(max_workers=max_workers) as executor,
                 tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
             ):
-            futures = {executor.submit(process_page, f, *const_args): i for i, f in enumerate(hocrfiles)}
+            futures = {executor.submit(process_page, f, args): i for i, f in enumerate(hocrfiles)}
 
             for future in as_completed(futures):
                 idx = futures[future]
@@ -543,7 +514,7 @@ def process_files_hocr2epubfxl(
                     progress_bar.update(1)
 
         reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
-        # reader_html_data = importlib.resources.read_binary("hocr", f"data/{text_format}-ebook-reader.html")
+        # reader_html_data = importlib.resources.read_binary("hocr", f"data/{args.text_format}-ebook-reader.html")
         reader_html_data = reader_html_data.replace(
             b"const svgFiles = [ /* TODO */ ];",
             (
@@ -553,11 +524,11 @@ def process_files_hocr2epubfxl(
             )
         )
         # set metadata: title
-        replacement = b"<title>" + doc_title.encode("utf8") + b"</title>"
+        replacement = b"<title>" + args.doc_title.encode("utf8") + b"</title>"
         reader_html_data = re.sub(rb"<title>.*</title>", replacement, reader_html_data)
         zf.writestr("index.html", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
-    # print(f"[+] EPUB written: {output_path}")
+    # print(f"[+] EPUB written: {args.output}")
 
 
 if __name__ == '__main__':
@@ -629,17 +600,7 @@ if __name__ == '__main__':
 
     assert 0.01 <= args.scale <= 100
     assert 1 <= args.quality <= 100
-    assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
+    assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
     assert args.text_format in TEXT_FORMAT_LIST
 
-    process_files_hocr2epubfxl(
-        args.infiles,
-        args.output,
-        args.scale,
-        args.quality,
-        args.pages,
-        args.image_format,
-        args.text_format,
-        args.doc_title,
-        args.text_html_join_words,
-    )
+    process_files_hocr2epubfxl(args)
