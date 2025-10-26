@@ -649,6 +649,9 @@ def process_files_hocr2epubfxl(args):
         reader_html_data = re.sub(rb"<title>.*</title>", replacement, reader_html_data)
         zf.writestr("index.html", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
+        # add empty .nojekyll file for github-pages
+        zf.writestr(".nojekyll", "", compress_type=zipfile.ZIP_STORED)
+
     # print(f"[+] EPUB written: {args.output}")
 
 
