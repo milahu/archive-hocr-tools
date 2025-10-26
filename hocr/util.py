@@ -12,12 +12,18 @@ def register_and_nuke_xhtml_namespace():
 
 def iterparse_tags(fp, tag=None, events=None):
     doc = ElementTree.iterparse(fp, events=events)
-    for act, elem in doc:
-        if tag is not None and elem.tag not in tag:
-            continue
+    try:
+        for act, elem in doc:
+            if tag is not None and elem.tag not in tag:
+                continue
 
-        yield act, elem
-
+            yield act, elem
+    except ElementTree.ParseError as exc:
+        if exc.code == 3:
+            # empty input -> no tags
+            # exc.msg == "no element found: line 1, column 0"
+            return
+        raise
 
 def elem_tostring(elem, xml_declaration=None, short_empty_elements=False):
     s = ElementTree.tostring(elem, method='xml',
