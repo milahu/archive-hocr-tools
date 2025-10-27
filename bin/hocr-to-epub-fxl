@@ -56,6 +56,21 @@ WEBP_METHOD = 6
 
 # only SVG supports searchable text with absolute word positions
 # https://stackoverflow.com/a/79799428/10440128
+# only HTML supports markup tags like
+#   <b>bold</b>
+#   <i>italics</i>
+#   <u>underline</u>
+#   <sup>superscript</sup>
+#   <sub>subscript</sub>
+#   ...
+#   but we dont need to render such markup in the *invisible* text layer
+#   so we dont need the svg foreignObject element to embed html or mathml
+#   this only breaks search across tag boundaries
+#   for example searching for "H2O" fails on "H<sub>2</sub>O"
+#   we could fix this by removing html tags
+#   and storing the original string in a data attribute like
+#   <span data-src="H<sub>2</sub>O">H2O</span>
+#   so the transform from hocr to svg is as lossless as possible
 DEFAULT_TEXT_FORMAT = "svg"
 TEXT_FORMAT_LIST = ["svg", "html"]
 
