@@ -72,6 +72,8 @@ def process_page(hocrfile, args):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
     # --- parse HOCR ---
+    page = None
+    page_w, page_h = None, None
     for page_elem in hocr_page_iterator(hocrfile):
         page = hocr_page_to_word_data(page_elem)
         break # FIXME dont assume single-page hocr files
@@ -82,7 +84,8 @@ def process_page(hocrfile, args):
         if m := re.search(rb'''<div class='ocr_page'.*?title='image "([^"]+)"''', f.read()):
             page_image_path = os.path.join(os.path.dirname(hocrfile), m.group(1).decode("utf8"))
     if not page_image_path or not os.path.exists(page_image_path):
-        raise ValueError(f"Missing image for {hocrfile}")
+        # raise ValueError(f"Missing image for {hocrfile}")
+        pass
 
     page_base = os.path.splitext(os.path.basename(hocrfile))[0]
     cached_page_image_path = f"{page_image_path}.q{args.quality}.s{args.scale}.{args.image_format}"
@@ -96,7 +99,7 @@ def process_page(hocrfile, args):
         page_w, page_h = im.size
         im.close()
         del im
-    else:
+    elif page_image_path and os.path.exists(page_image_path):
         # write cache
         # compress page image
         im = Image.open(page_image_path)
@@ -148,6 +151,10 @@ def process_page(hocrfile, args):
             return bbox
 
     epub_page_image_path = f"images/{page_base}.{args.image_format}"
+    if page_image_path is None:
+        epub_page_image_path = None
+        img_path = None
+        img_data = None
 
     get_text_data_by_text_format = {
         "html": get_text_data_html,
@@ -216,10 +223,13 @@ def get_text_data_svg(
     svg_buf.write(' image { filter: invert(); }\n')
     svg_buf.write('}\n')
     svg_buf.write('</style>\n')
-    svg_buf.write(
-        f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
-        f'preserveAspectRatio="none" xlink:href="{epub_page_image_path}"/>\n'
-    )
+    if epub_page_image_path:
+        svg_buf.write(
+            f'<image x="0" y="0" width="{page_w}" height="{page_h}" '
+            f'preserveAspectRatio="none" xlink:href="{epub_page_image_path}"/>\n'
+        )
+
+    if page is None: page = []
 
     for paragraph in page:
         first_line = paragraph["lines"][0]
@@ -306,7 +316,8 @@ def get_text_data_html(
     html_buf.write(' position: relative;\n')
     html_buf.write(f' width: {page_w}px;\n')
     html_buf.write(f' height: {page_h}px;\n')
-    html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
+    if epub_page_image_path:
+        html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
     html_buf.write(f' background-size: {page_w}px {page_h}px;\n')
     # html_buf.write(' background-size: 100% 100%;\n')
     html_buf.write(' transform-origin: top left;\n')
@@ -345,6 +356,8 @@ def get_text_data_html(
     html_buf.write('<body>\n')
     html_buf.write('<main>\n')
     html_buf.write('<section>\n')
+
+    if page is None: page = []
 
     for paragraph in page:
         last_line_idx = len(paragraph["lines"]) - 1
@@ -511,7 +524,8 @@ def process_files_hocr2epubfxl(args):
         def process_page_result(page_result):
             svg_path, svg_data, img_path, img_data = page_result
             zf.writestr(svg_path, svg_data, compress_type=zipfile.ZIP_DEFLATED)
-            zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
+            if img_path and img_data:
+                zf.writestr(img_path, img_data, compress_type=zipfile.ZIP_STORED)
             svg_path_list.append(svg_path)
             svg_data_list.append(svg_data)
         svg_path_list = []
