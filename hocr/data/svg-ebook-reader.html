@@ -166,8 +166,10 @@
   }
 
   function goToPage(page) {
-    if (page < 1) page = 1;
-    if (page > totalPages) page = totalPages;
+    // if (page < 1) page = 1; // limit
+    // if (page > totalPages) page = totalPages; // limit
+    if (page < 1) page = totalPages; // overflow
+    if (page > totalPages) page = 1; // overflow
     currentPage = page;
     loadPages();
   }
