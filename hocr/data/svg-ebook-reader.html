@@ -165,13 +165,17 @@
     viewer.scrollTop = 0;
   }
 
-  function goToPage(page) {
+  function goToPage(page, fromHash = false) {
     // if (page < 1) page = 1; // limit
     // if (page > totalPages) page = totalPages; // limit
     if (page < 1) page = totalPages; // overflow
     if (page > totalPages) page = 1; // overflow
     currentPage = page;
     loadPages();
+    // update hash if user navigated via buttons/input/etc.
+    if (!fromHash) {
+      history.replaceState(null, '', `#${currentPage}`);
+    }
   }
 
   function nextPage() {
@@ -242,9 +246,33 @@
     }
   }, 1000);
 
+  function getPageFromHash() {
+    const match = location.hash.match(/^#(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  // Initial load: get page number from URL fragment ID
+  const initialPage = getPageFromHash();
+  if (initialPage && initialPage >= 1 && initialPage <= totalPages) {
+    currentPage = initialPage;
+  }
+
   // Initial load
   loadPages();
   updateMode();
+
+  // Make sure the hash is correct (e.g. if user loaded without one)
+  history.replaceState(null, '', `#${currentPage}`);
+
+  // --- URL fragment synchronization ---
+  // When URL hash changes, navigate to that page
+  window.addEventListener('hashchange', () => {
+    const pageFromHash = getPageFromHash();
+    if (pageFromHash && pageFromHash !== currentPage) {
+      goToPage(pageFromHash, true);
+    }
+  });
+
 </script>
 
 </body>
