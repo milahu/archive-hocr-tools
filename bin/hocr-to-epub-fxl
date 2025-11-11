@@ -136,6 +136,10 @@ def process_page(hocrfile, args):
             # keep full color resolution
             # prevent color bleeding around text
             im_save_kwargs["subsampling"] = "4:4:4"
+            if im.mode == "L": # grayscale
+                # dont produce broken grayscale avif files
+                # https://issues.chromium.org/issues/362539762
+                im_save_kwargs["subsampling"] = "4:0:0"
             # speed trades off encoding time vs. quality. 0–10. lower is better.
             im_save_kwargs["speed"] = 0
             im_save_kwargs["max_threads"] = args.jobs
