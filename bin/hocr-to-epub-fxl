@@ -687,7 +687,7 @@ def process_files_hocr2epubfxl(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HOCR to EPUB-FXL')
     parser.add_argument(
-        'infiles',
+        'infiles', # args.infiles
         nargs='+',
         help=' '.join([
             'Filenames to read.',
@@ -699,20 +699,20 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '-o',
-        '--output',
+        '--output', # args.output
         help='path to output EPUB file',
         required=True,
     )
     parser.add_argument(
         '-s',
-        '--scale',
+        '--scale', # args.scale
         help='scale factor for the page images. default: 1. example: 0.5',
         default=1.0,
         type=float,
     )
     parser.add_argument(
         '-q',
-        '--quality',
+        '--quality', # args.quality
         help=f'compression quality in percent for the page images. default: {DEFAULT_QUALITY}. example: 5',
         default=DEFAULT_QUALITY,
         type=int,
