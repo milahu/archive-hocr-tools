@@ -438,7 +438,7 @@ def is_image_path(path):
 
 
 class UnpackedZipFileWriter:
-    """A drop-in replacement for zipfile.ZipFile that writes unpacked files."""
+    """A drop-in replacement for zipfile.ZipFile that writes unpacked files and preserves file mode."""
     def __init__(self, output_dir, mode="w", *args, **kwargs):
         self.output_dir = output_dir
         self.mode = mode
@@ -446,7 +446,24 @@ class UnpackedZipFileWriter:
         # FileExistsError: [Errno 17] File exists: 'somefile'
         os.makedirs(output_dir, exist_ok=True)
 
+    def _get_arcname_mode(self, arcname):
+        """Return (filename, mode) from str or ZipInfo."""
+        if isinstance(arcname, zipfile.ZipInfo):
+            file_info = arcname
+            filename = file_info.filename
+            # extract mode from external_attr (upper 16 bits for Unix)
+            mode = (file_info.external_attr >> 16) & 0o7777
+            if mode == 0:
+                mode = 0o644  # default mode if none set
+            return filename, mode
+        else:
+            filename = arcname
+            mode = None
+            return filename, mode
+
     def writestr(self, arcname, data, compress_type=None):
+        arcname, mode = self._get_arcname_mode(arcname)
+        mode = mode or 0o644  # default mode
         file_path = os.path.join(self.output_dir, arcname)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         # Write bytes or text
@@ -454,14 +471,18 @@ class UnpackedZipFileWriter:
             data = data.encode("utf-8")
         with open(file_path, "wb") as f:
             f.write(data)
+        os.chmod(file_path, mode)
 
     def write(self, filename, arcname=None, compress_type=None):
         if arcname is None:
             arcname = os.path.basename(filename)
+        arcname, mode = self._get_arcname_mode(arcname)
         dest = os.path.join(self.output_dir, arcname)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(filename, "rb") as src, open(dest, "wb") as dst:
-            dst.write(src.read())
+        if os.path.realpath(filename) != os.path.realpath(dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy(filename, dest)
+        if mode != None:
+            os.chmod(dest, mode)
 
     def close(self):
         pass
