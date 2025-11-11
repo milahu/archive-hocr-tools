@@ -694,13 +694,14 @@ def process_files_hocr2epubfxl(args):
         html_buf.write(b"</style>\n")
         html_buf.write(b"</head>\n")
         html_buf.write(b"<body>\n")
-        xml_header = b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        # xml_header = b'<?xml version="1.0" encoding="UTF-8"?>\n'
         for svg_idx, svg_path in enumerate(svg_path_list):
             html_buf.write(b"<!-- " + os.path.basename(svg_path).encode("utf8") + b"-->\n")
             svg_data = svg_data_list[svg_idx]
             # svg_data = svg_data.replace(b'xlink:href="images/', b'xlink:href="OEBPS/images/')
-            if svg_data.startswith(xml_header):
-                svg_data = svg_data[len(xml_header):]
+            # no. chromium ignores extra xml processing instructions in the html body
+            # if svg_data.startswith(xml_header):
+            #     svg_data = svg_data[len(xml_header):]
             html_buf.write(svg_data)
         html_buf.write(b"</body>\n")
         html_buf.write(b"</html>\n")
