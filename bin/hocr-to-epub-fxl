@@ -979,6 +979,9 @@ if __name__ == '__main__':
     assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
     assert args.text_format in TEXT_FORMAT_LIST
     assert 1 <= args.jobs <= max_max_workers, f"jobs must be between 1 and {max_max_workers}"
+    for src_path in args.infiles:
+        with open(src_path, "rb") as f: # try to open the file
+            pass
     for src_path in (args.append_pages + args.add_files):
         src_path, dst_path = parse_src_dst_path(src_path)
         with open(src_path, "rb") as f: # try to open the file
