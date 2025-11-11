@@ -433,6 +433,42 @@ def is_image_path(path):
     return _type and _type.startswith("image/")
 
 
+class UnpackedZipFileWriter:
+    """A drop-in replacement for zipfile.ZipFile that writes unpacked files."""
+    def __init__(self, output_dir, mode="w", *args, **kwargs):
+        self.output_dir = output_dir
+        self.mode = mode
+        # NOTE this throws if output_dir exists and is a file
+        # FileExistsError: [Errno 17] File exists: 'somefile'
+        os.makedirs(output_dir, exist_ok=True)
+
+    def writestr(self, arcname, data, compress_type=None):
+        file_path = os.path.join(self.output_dir, arcname)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        # Write bytes or text
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        with open(file_path, "wb") as f:
+            f.write(data)
+
+    def write(self, filename, arcname=None, compress_type=None):
+        if arcname is None:
+            arcname = os.path.basename(filename)
+        dest = os.path.join(self.output_dir, arcname)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(filename, "rb") as src, open(dest, "wb") as dst:
+            dst.write(src.read())
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
 # --- main processor ---
 def process_files_hocr2epubfxl(args):
     # separate HOCR + images
@@ -461,8 +497,13 @@ def process_files_hocr2epubfxl(args):
         if imgfiles:
             imgfiles = imgfiles[(min_page - 1):max_page]
 
+    ZipFileWriter = zipfile.ZipFile
+
+    if args.output_unpacked:
+        ZipFileWriter = UnpackedZipFileWriter
+
     # --- create ZIP archive ---
-    with zipfile.ZipFile(args.output, "w") as zf:
+    with ZipFileWriter(args.output, "w") as zf:
         # mimetype must be first and uncompressed
         zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
 
@@ -702,6 +743,11 @@ if __name__ == '__main__':
         '--output', # args.output
         help='path to output EPUB file',
         required=True,
+    )
+    parser.add_argument(
+        '--output-unpacked', # args.output_unpacked
+        help='write EPUB contents to the directory at output. replace existing files',
+        action='store_true',
     )
     parser.add_argument(
         '-s',
