@@ -6,6 +6,7 @@ import os
 import re
 import io
 import sys
+import zlib
 import base64
 import argparse
 import mimetypes
@@ -507,6 +508,32 @@ def parse_src_dst_path(src_path):
     return src_path, dst_path
 
 
+def is_compressible(file_bytes: bytes, threshold: float = 0.95) -> bool:
+    """
+    Test if file_bytes are compressible.
+
+    Compresses the data using zlib and compares the compressed size.
+    Returns True if compression ratio < threshold.
+
+    threshold = compressed_size / original_size
+
+    example: threshold=0.95 -> must save at least 5% to be worth compressing
+    """
+    if not file_bytes:
+        return False  # empty file -> dont compress
+    # file_bytes = file_bytes[:1024 * 1024]  # up to 1MB sample
+    # this uses the same compression algorithm as zipfile.ZipFile
+    compressed_bytes = zlib.compress(file_bytes, level=6)
+    ratio = len(compressed_bytes) / len(file_bytes)
+    return ratio < threshold
+
+
+def get_compress_type(file_bytes: bytes, threshold: float = 0.95):
+    if is_compressible(file_bytes, threshold):
+        return zipfile.ZIP_DEFLATED
+    return zipfile.ZIP_STORED
+
+
 # --- main processor ---
 def process_files_hocr2epubfxl(args):
     # separate HOCR + images
@@ -587,6 +614,13 @@ def process_files_hocr2epubfxl(args):
                 manifest_items.append(f"<item id='page{page_num}' href='{dst_path}' media-type='{page_media_type}'/>")
                 spine_items.append(f"<itemref idref='page{page_num}'/>")
             del page_filename_set
+
+        # add files to manifest
+        for src_path in args.add_files:
+            file_media_type, _encoding = mimetypes.guess_type(src_path)
+            src_path, dst_path = parse_src_dst_path(src_path)
+            manifest_items.append(f"<item id='{dst_path}' href='{dst_path}' media-type='{file_media_type}'/>")
+            spine_items.append(f"<itemref idref='{dst_path}'/>")
 
         content_opf = (
             "<?xml version='1.0' encoding='utf-8'?>\n"
@@ -706,6 +740,25 @@ def process_files_hocr2epubfxl(args):
                 pass
             else:
                 zf.writestr(dst_path, page_bytes, compress_type=zipfile.ZIP_DEFLATED)
+
+        # add files to zipfile
+        for src_path in args.add_files:
+            src_path, dst_path = parse_src_dst_path(src_path)
+            if (
+                    args.output_unpacked and
+                    os.path.realpath(src_path) == os.path.realpath(os.path.join(args.output, dst_path))
+                ):
+                # edge case: src_path == dst_path
+                continue
+            with open(src_path, "rb") as f:
+                file_bytes = f.read()
+            compress_type = get_compress_type(file_bytes)
+            file_info = zipfile.ZipInfo(dst_path)
+            # preserve executable mode
+            file_mode = 0o755 if os.access(src_path, os.X_OK) else 0o644
+            file_info.external_attr = (file_mode & 0xFFFF) << 16
+            zf.writestr(file_info, file_bytes, compress_type=compress_type)
+            del file_bytes
 
         # join all pages
         html_path = "OEBPS/index.html"
@@ -872,6 +925,15 @@ if __name__ == '__main__':
         default=[],
     )
     parser.add_argument(
+        '--add-file',
+        dest="add_files", # args.add_files
+        action='append',
+        metavar='PATH[:DST_PATH]',
+        help='add file in any format',
+        type=str,
+        default=[],
+    )
+    parser.add_argument(
         # '-f',
         '--image-format', # args.image_format
         help=f'image format for the page images. default: {DEFAULT_IMAGE_FORMAT}. example: webp',
@@ -917,7 +979,7 @@ if __name__ == '__main__':
     assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
     assert args.text_format in TEXT_FORMAT_LIST
     assert 1 <= args.jobs <= max_max_workers, f"jobs must be between 1 and {max_max_workers}"
-    for src_path in args.append_pages:
+    for src_path in (args.append_pages + args.add_files):
         src_path, dst_path = parse_src_dst_path(src_path)
         with open(src_path, "rb") as f: # try to open the file
             pass
