@@ -16,6 +16,7 @@ import traceback
 from xml.sax.saxutils import escape
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import importlib.resources
+import urllib.parse
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -225,6 +226,9 @@ def get_text_data_svg(
         '<svg\n'
         ' xmlns="http://www.w3.org/2000/svg"\n'
         ' xmlns:xlink="http://www.w3.org/1999/xlink"\n'
+        ' xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns"\n'
+        ' xmlns:dc="http://purl.org/dc/elements/1.1/"\n'
+        ' xmlns:cc="http://creativecommons.org/ns"\n'
         f' version="1.1" viewBox="0 0 {page_w} {page_h}"\n'
         # no. this breaks zoom in iframe
         # scale to fit width
@@ -234,6 +238,25 @@ def get_text_data_svg(
         ' style="margin:auto"\n'
         '>\n'
     )
+
+    svg_buf.write('<metadata>\n')
+    svg_buf.write('<rdf:RDF>\n')
+
+    if args.canonical_url_base:
+        # set metadata: canonical URL
+        page_base = os.path.splitext(os.path.basename(hocrfile))[0]
+        text_path = f"OEBPS/{page_base}.{args.text_format}"
+        canonical_url = urllib.parse.urljoin(args.canonical_url_base, text_path)
+        canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+        svg_buf.write(f'<cc:Work rdf:about="{canonical_url}">\n')
+        # svg_buf.write(f'<dc:identifier>{canonical_url}</dc:identifier>\n')
+    else:
+        svg_buf.write(f'<cc:Work rdf:about="">\n')
+
+    svg_buf.write('</cc:Work>\n')
+    svg_buf.write('</rdf:RDF>\n')
+    svg_buf.write('</metadata>\n')
+
     svg_buf.write('<style>\n')
     svg_buf.write('text, tspan { dominant-baseline: mathematical; fill: transparent; }\n')
     svg_buf.write('svg { background: #e2e2e2; }\n') # 90% white
@@ -305,6 +328,14 @@ def get_text_data_html(
     # set metadata: title
     html_buf.write(f'<title>{escape(args.doc_title)} ({os.path.basename(hocrfile)})</title>\n')
     html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
+
+    if args.canonical_url_base:
+        # set metadata: canonical URL
+        page_base = os.path.splitext(os.path.basename(hocrfile))[0]
+        text_path = f"OEBPS/{page_base}.{args.text_format}"
+        canonical_url = urllib.parse.urljoin(args.canonical_url_base, text_path)
+        canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+        html_buf.write(f'<link rel="canonical" href="{canonical_url}"/>\n')
 
     html_buf.write('<style type="text/css">\n')
 
@@ -775,6 +806,14 @@ def process_files_hocr2epubfxl(args):
         html_buf.write(escape(args.doc_title).encode("utf8"))
         html_buf.write(b'</title>\n')
         html_buf.write(b'<meta name="generator" content="hocr-to-epub-fxl">\n')
+
+        if args.canonical_url_base:
+            # set metadata: canonical URL
+            # NOTE this short URL assumes that the HTTP server serves index.html at the directory URL
+            canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/")
+            canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+            html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'">\n')
+
         html_buf.write(b'<style>\n')
         html_buf.write(b'html, body {\n')
         html_buf.write(b' margin: 0;\n')
@@ -862,6 +901,16 @@ def process_files_hocr2epubfxl(args):
         # set metadata: title
         replacement = b"<title>" + args.doc_title.encode("utf8") + b"</title>"
         reader_html_data = re.sub(rb"<title>.*</title>", replacement, reader_html_data)
+
+        if args.canonical_url_base:
+            # set metadata: canonical URL
+            # NOTE this short URL assumes that the HTTP server serves index.html at the directory URL
+            canonical_url = args.canonical_url_base
+            canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
+            a = b'<link rel="canonical" href="">'
+            b = b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'">'
+            reader_html_data = reader_html_data.replace(a, b)
+
         zf.writestr("index.html", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
         # add empty .nojekyll file for github-pages
@@ -967,6 +1016,12 @@ if __name__ == '__main__':
         type=str,
     )
     parser.add_argument(
+        '--canonical-url-base', # args.canonical_url_base
+        help=f'canonical URL of the root directory path',
+        default="",
+        type=str,
+    )
+    parser.add_argument(
         '--jobs', # args.jobs
         help=f'run N jobs in parallel. default: {default_max_workers}. max: {max_max_workers}',
         default=default_max_workers,
@@ -986,5 +1041,8 @@ if __name__ == '__main__':
         src_path, dst_path = parse_src_dst_path(src_path)
         with open(src_path, "rb") as f: # try to open the file
             pass
+    if args.canonical_url_base:
+        if not args.canonical_url_base.endswith("/"):
+            args.canonical_url_base += "/"
 
     process_files_hocr2epubfxl(args)
