@@ -104,7 +104,8 @@ def process_page(hocrfile, args):
         # raise ValueError(f"Missing image for {hocrfile}")
         pass
 
-    page_base = os.path.splitext(os.path.basename(hocrfile))[0]
+    page_base = get_page_base(hocrfile)
+
     cached_page_image_path = f"{page_image_path}.q{args.quality}.s{args.scale}.{args.image_format}"
 
     # --- check image cache ---
@@ -219,6 +220,8 @@ def get_text_data_svg(
         args,
     ):
 
+    page_base = get_page_base(hocrfile)
+
     # --- build SVG ---
     svg_buf = io.StringIO()
     svg_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
@@ -244,7 +247,6 @@ def get_text_data_svg(
 
     if args.canonical_url_base:
         # set metadata: canonical URL
-        page_base = os.path.splitext(os.path.basename(hocrfile))[0]
         text_path = f"OEBPS/{page_base}.{args.text_format}"
         canonical_url = urllib.parse.urljoin(args.canonical_url_base, text_path)
         canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
@@ -314,6 +316,8 @@ def get_text_data_html(
         args,
     ):
 
+    page_base = get_page_base(hocrfile)
+
     # --- build HTML ---
     html_buf = io.StringIO()
     html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
@@ -326,12 +330,11 @@ def get_text_data_html(
     html_buf.write('<head>\n')
     html_buf.write('<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />\n')
     # set metadata: title
-    html_buf.write(f'<title>{escape(args.doc_title)} ({os.path.basename(hocrfile)})</title>\n')
+    html_buf.write(f'<title>{escape(args.doc_title)} ({page_base})</title>\n')
     html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
 
     if args.canonical_url_base:
         # set metadata: canonical URL
-        page_base = os.path.splitext(os.path.basename(hocrfile))[0]
         text_path = f"OEBPS/{page_base}.{args.text_format}"
         canonical_url = urllib.parse.urljoin(args.canonical_url_base, text_path)
         canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
@@ -461,6 +464,13 @@ def get_text_data_html(
     html_data = html_buf.getvalue().encode("utf-8")
     del html_buf
     return html_data
+
+
+def get_page_base(hocrfile):
+    page_base = os.path.basename(hocrfile)
+    # TODO handle more hocr file extensions
+    page_base = re.sub(r"\.hocr(\.html)?$", "", page_base, flags=re.I)
+    return page_base
 
 
 # --- check if path is an image ---
@@ -618,7 +628,7 @@ def process_files_hocr2epubfxl(args):
 
         # --- prepare content.opf ---
         manifest_items, spine_items = [], []
-        page_basenames = [os.path.splitext(os.path.basename(f))[0] for f in hocrfiles]
+        page_basenames = [get_page_base(f) for f in hocrfiles]
         text_media_type = media_type_by_text_format[args.text_format]
         page_filename_list = []
         for i, base in enumerate(page_basenames):
