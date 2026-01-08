@@ -2,6 +2,42 @@
 
 # based on hocr-svg
 
+# TODO add inverse operation: convert epub to hocr files
+
+# TODO epub-fxl-editor-qt based on https://github.com/milahu/hocr-editor-qt
+# or a browser-based editor
+
+# TODO add page "full text" similar to "all pages"
+# but without page images, and text-color:black
+
+# TODO "all pages" should lazy-load images
+# but that should not break printing
+
+# TODO detect vertical text, add transform rotate 90 degrees
+
+# TODO reader shows dark mode, "all pages" shows light mode
+
+# TODO reader menu is too small in firefox
+
+# TODO store the lightness value of each page
+# so we can dynamically enforce lightmode / darkmode for all pages
+# see also https://github.com/milahu/hocr-files-template-repo
+# 070-deskew.lightness.txt
+# 067-force-lightmode.py
+
+# TODO fit width by default
+# with mobile browsers, we cannot zoom out of the page iframe
+# FIXME mobile browsers have no "zoom out" = minimum zoom level is 100%
+
+# TODO add lang attribute: <html lang="xxx">
+
+# TODO add scripts: git2epub.py epub2git.py update.py
+
+# TODO add option to handle end-of-line-hyphens
+# <span>hy</span><span>phen</span>
+
+# TODO add inverse operation: convert epub to hocr files
+
 import os
 import re
 import io
