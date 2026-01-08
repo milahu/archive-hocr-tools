@@ -7,6 +7,8 @@ import re
 import io
 import sys
 import zlib
+import math
+import json
 import base64
 import argparse
 import mimetypes
@@ -56,8 +58,13 @@ assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_fo
 
 WEBP_METHOD = 6
 
-# only SVG supports searchable text with absolute word positions
-# https://stackoverflow.com/a/79799428/10440128
+# both HTML and SVG support searchable text
+# but in HTML we must use relative word positions
+# which break in some browsers
+# parameter: text-html-relative-word-positions
+# https://stackoverflow.com/questions/62381455
+# https://github.com/milahu/chromium-discuss-text-search-absolute-position-spans
+
 # only HTML supports markup tags like
 #   <b>bold</b>
 #   <i>italics</i>
@@ -73,7 +80,14 @@ WEBP_METHOD = 6
 #   and storing the original string in a data attribute like
 #   <span data-src="H<sub>2</sub>O">H2O</span>
 #   so the transform from hocr to svg is as lossless as possible
-DEFAULT_TEXT_FORMAT = "svg"
+
+# use HTML by default for
+#   markup tags
+#   hypothesis annotations
+#     SVG annotations are blocked by https://github.com/hypothesis/h/issues/9990
+#   clipboard text in firefox
+
+DEFAULT_TEXT_FORMAT = "html"
 TEXT_FORMAT_LIST = ["svg", "html"]
 
 media_type_by_text_format = {
@@ -279,6 +293,9 @@ def get_text_data_svg(
     for paragraph in page:
         first_line = paragraph["lines"][0]
         x1, y1, x2, y2 = scale_bbox(first_line["bbox"])
+        # add empty line between paragraphs in clipboard text
+        # WONTFIX this works in chrome but not firefox
+        # firefox has no newlines in clipboard text
         svg_buf.write(f'<text x="{x1}" y="{y1-1}" xml:space="preserve"> </text>\n')
         if not args.text_svg_split_lines:
             svg_buf.write(f'<text x="{x1}" y="{y1}">\n')
@@ -320,6 +337,17 @@ def get_text_data_html(
 
     # --- build HTML ---
     html_buf = io.StringIO()
+    if args.debug:
+        debug_buf = io.StringIO()
+        debug_buf.write('<div id="debug">\n')
+        args_dict = dict(vars(args))
+        del args_dict["infiles"]
+        del args_dict["jobs"]
+        del args_dict["pages"]
+        del args_dict["append_pages"]
+        del args_dict["add_files"]
+        debug_buf.write('<!-- args = ' + json.dumps(args_dict, indent=2) + ' -->\n')
+
     html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
     html_buf.write(
         '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"\n'
@@ -342,13 +370,23 @@ def get_text_data_html(
 
     html_buf.write('<style type="text/css">\n')
 
-    html_buf.write('html, body {\n')
+    html_buf.write('* {\n')
     html_buf.write(' margin: 0;\n')
     html_buf.write(' padding: 0;\n')
-    html_buf.write(' width: 100%;\n')
-    html_buf.write(' height: 100%;\n')
+    html_buf.write(' font-size: 100%;\n') # h1, h2, ...
+    html_buf.write(' line-height: 100%;\n')
+    html_buf.write('}\n')
+    if args.text_html_relative_word_positions_dynamic_font_width:
+        html_buf.write('html {\n')
+        html_buf.write(' --c: 1px;\n') # character width scaling factor
+        html_buf.write('}\n')
+    html_buf.write('html, body {\n')
+    # html_buf.write(' width: 100%;\n')
+    # html_buf.write(' overflow-x: hidden;\n')
+    # html_buf.write(' height: 100%;\n')
     html_buf.write('}\n')
     html_buf.write('body {\n')
+    # background behind the page image
     html_buf.write(' background: gray;\n')
     html_buf.write('}\n')
     html_buf.write('@media print {\n')
@@ -364,16 +402,19 @@ def get_text_data_html(
     html_buf.write('}\n')
 
     # section = page
-    html_buf.write('section {\n')
+    html_buf.write(f'section#page-{page_base} {{\n')
     # FIXME scale to fit width (at 100% browser zoom level)
     # html_buf.write(' outline: solid 10px green;\n') # debug
     html_buf.write(' position: relative;\n')
     html_buf.write(f' width: {page_w}px;\n')
     html_buf.write(f' height: {page_h}px;\n')
-    if epub_page_image_path:
-        html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
-    html_buf.write(f' background-size: {page_w}px {page_h}px;\n')
-    # html_buf.write(' background-size: 100% 100%;\n')
+    if args.text_html_relative_word_positions:
+        html_buf.write(' overflow: hidden;\n')
+    # no. darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
+    # if epub_page_image_path:
+    #     html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
+    #     html_buf.write(f' background-size: {page_w}px {page_h}px;\n')
+    #     # html_buf.write(' background-size: 100% 100%;\n')
     html_buf.write(' transform-origin: top left;\n')
     # not working. we cannot use 100vw here. this would require javascript
     # html_buf.write(f' transform: scale(calc(100% / {page_w} * 100vw));\n') # scale to fit width
@@ -386,17 +427,46 @@ def get_text_data_html(
     # html_buf.write(' outline: solid 1px black;\n')
     # html_buf.write('}\n')
 
+    if 1:
+        html_buf.write('section > img.page {\n')
+        html_buf.write(' position: absolute;\n')
+        html_buf.write(' left: 0;\n')
+        html_buf.write(' top: 0;\n')
+        html_buf.write(' margin: 0;\n')
+        # exclude page images from clipboard
+        html_buf.write(' user-select: none;\n')
+        html_buf.write('}\n')
+
+    # # invert image colors in dark mode
+    # html_buf.write('@media (prefers-color-scheme: dark) {\n')
+    # html_buf.write(' section > img.page { filter: invert(); }\n')
+    # html_buf.write('}\n')
+
+    # div.p = paragraph
+    html_buf.write('div.p {\n')
+    if args.text_html_relative_word_positions:
+        html_buf.write(' position: absolute;\n')
+        html_buf.write(' white-space: nowrap;\n')
+    html_buf.write('}\n')
+
     # div = line
     # span = word
-    html_buf.write('div, span {\n')
-    html_buf.write(' position: absolute;\n')
+    html_buf.write('div.p > div, span {\n')
+    html_buf.write(' display: inline;\n')
+    # html_buf.write(' display: inline-block;\n') # for transform:scaleX(...)
+    if args.text_html_relative_word_positions:
+        html_buf.write(' position: relative;\n')
+    else:
+        html_buf.write(' position: absolute;\n')
+    # transparent text layer
     html_buf.write(' color: transparent;\n')
     # html_buf.write(' font-family: sans-serif;\n')
-    html_buf.write(' font-family: monospace;\n') # simplify scale_w calculation
+    # html_buf.write(' font-family: monospace;\n') # simplify scale_w calculation
     html_buf.write(' white-space: nowrap;\n')
     html_buf.write(' line-height: 1;\n')
     html_buf.write(' transform-origin: left center;\n')
-    html_buf.write('\n')
+    if args.text_html_relative_word_positions:
+        html_buf.write(' vertical-align: top;\n')
     html_buf.write('}\n')
 
     # invert image colors in dark mode
@@ -404,16 +474,149 @@ def get_text_data_html(
     html_buf.write(' section { filter: invert(); }\n')
     html_buf.write('}\n')
 
+    # monospace fonts have an average character aspect ratio of 6:10
+    # https://stackoverflow.com/a/19114963/10440128
+    # for cross-platform consistent font-width, we would need to define a font-face with a font file (woff2)
+    # font-family: Courier; # aspect: 0.600095 = 1229 / 2048 = 0.60009765625
+    # font-family: monospace; # aspect: 0.60205 = 1233 / 2048 = 0.60205078125
+    # w_char, h_char = 6, 10
+    # w_char, h_char = 1233, 2048 # monospace -> computed font-family: Hack
+    # w_char, h_char = 1204, 2048 # monospace in firefox on linux # Liberation Mono?
+
+    w_char, h_char = 1233, 2048 # monospace -> computed font-family: Hack
+    font_family = "monospace"
+
+    if args.text_html_bundle_font:
+        font_family = "Cousine" # monospace font in tor-browser
+        # font_family = "Hack" # monospace font on my system
+
+    if font_family == "monospace":
+        # use system font
+        # NOTE different browsers and platforms have different default monospace fonts
+        # so w_char is not constant across browsers and platforms
+        w_char, h_char = 1233, 2048 # TODO what font
+        html_buf.write("div.p, div.p > div, span {\n")
+        html_buf.write(" font-family: monospace;\n") # simplify scale_w calculation
+        # force truly fixed advance widths
+        html_buf.write(" font-variant-ligatures: none;\n")
+        html_buf.write(" font-feature-settings: 'liga' 0;\n")
+        html_buf.write(" font-kerning: none;\n")
+        html_buf.write("}\n")
+    else:
+        # use custom font
+        # FIXME add font file to epub output
+        html_buf.write("@font-face {\n")
+        html_buf.write(f" font-family: '{font_family}';\n")
+        if font_family == "Cousine":
+            w_char, h_char = 1200, 2048
+            # w_char, h_char = 1821, 2048 # chrome # FIXME why is this different from firefox
+            # https://fonts.google.com/specimen/Cousine
+            # https://en.bestfonts.pro/font/cousine
+            html_buf.write(" src: url(./Cousine-Regular.woff2) format('woff2');\n")
+        elif font_family == "Hack":
+            w_char, h_char = 1204.105224609375, 2048
+            # https://github.com/source-foundry/Hack/releases/download/v3.003/Hack-v3.003-webfonts.zip
+            html_buf.write(" src: url(./hack-regular.woff2) format('woff2');\n")
+        else:
+            raise ValueError(f"unknown font_family {font_family!r}")
+        html_buf.write(" font-style: normal;\n")
+        html_buf.write(" font-weight: 400;\n")
+        # html_buf.write(" unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;\n")
+        html_buf.write("}\n")
+        html_buf.write("*, body, div.p, div.p > div, span {\n")
+        html_buf.write(f" font-family: '{font_family}';\n") # simplify scale_w calculation
+        html_buf.write("}\n")
+
+    paragraph_font_size = 16 # arbitrary. needed for space size calculations
+
+    paragraph_space_width = paragraph_font_size / h_char * w_char
+
     html_buf.write('</style>\n')
+
+    if args.text_html_relative_word_positions_dynamic_font_width:
+        # dynamically scale the text positions with var(--c)
+        # FIXME run this only once in the "all pages" index.html
+        html_buf.write("<script>\n")
+        html_buf.write("if (1) {\n")
+        html_buf.write("    const canvas = document.createElement('canvas');\n")
+        html_buf.write("    const measure = canvas.getContext('2d');\n")
+        html_buf.write(f"    measure.font = '2048px {font_family}';\n")
+        html_buf.write("    const charWidth = measure.measureText('M').width;\n")
+        if 0:
+            # check constant char width
+            import string
+            letters_list = list(string.ascii_letters + string.digits + ",.-+#*~'\"!?`´^°§$%&/()[]{}= ")
+            html_buf.write(f"    const allChars = {letters_list};\n")
+            html_buf.write("    for (let char of allChars) {\n")
+            html_buf.write("        const thisCharWidth = measure.measureText(char).width;\n")
+            html_buf.write("        if (thisCharWidth != charWidth) {\n")
+            html_buf.write("            console.log(`non-monospace char width: ${char} -> ${thisCharWidth}`);\n")
+            html_buf.write("        }\n")
+            html_buf.write("    }\n")
+        html_buf.write("    canvas.remove();\n")
+        html_buf.write(f"    const charWidthFactor = {w_char} / charWidth;\n")
+        html_buf.write("    console.log(`character aspect ratio: ${charWidth}:2048 -> charWidthFactor: ${charWidthFactor}`);\n")
+        html_buf.write(f"    if (charWidth != {w_char}) {{\n")
+        html_buf.write("        // <html style='--c: 123px'>\n")
+        html_buf.write("        document.documentElement.style.setProperty('--c', `${charWidthFactor}px`);\n")
+        html_buf.write("    }\n")
+        html_buf.write("}\n")
+        html_buf.write("</script>\n")
+
+    if 1:
+        # detect user agent
+        html_buf.write("<script>\n")
+        html_buf.write("if (!globalThis._userAgentDetectionIsDone) {\n")
+        html_buf.write("globalThis._userAgentDetectionIsDone = true;\n")
+        html_buf.write("(() => {\n")
+        html_buf.write("  const ua = navigator.userAgent;\n")
+        # TODO better check?
+        html_buf.write("  if (ua.includes('Firefox')) { console.log('user agent is Firefox'); globalThis._userAgentIsFirefox = true; return; }\n")
+        html_buf.write("  if (ua.includes('Edg')) { console.log('user agent is Edge'); globalThis._userAgentIsEdge = true; return; }\n")
+        html_buf.write("  if (ua.includes('Chrome')) { console.log('user agent is Chrome'); globalThis._userAgentIsChrome = true; return; }\n")
+        html_buf.write("  if (ua.includes('Safari')) { console.log('user agent is Safari'); globalThis._userAgentIsSafari = true; return; }\n")
+        html_buf.write("})();\n")
+        html_buf.write("}\n")
+        # dynamically modify the html document
+        html_buf.write("if (!globalThis._DOMContentLoadedEventListenerIsAdded) {\n")
+        html_buf.write("globalThis._DOMContentLoadedEventListenerIsAdded = true;\n")
+        html_buf.write("document.addEventListener('DOMContentLoaded', () => {\n")
+        # undo: add space between words in clipboard text
+        # TODO do this for more browsers?
+        html_buf.write("  if (globalThis._userAgentIsFirefox) {\n")
+        html_buf.write("    console.log('removing &nbsp; after words to fix clipboard text');\n")
+        html_buf.write("    for (const span of document.querySelectorAll('span')) {\n")
+        # some spans end with "<br>"
+        html_buf.write("      if (span.innerHTML.slice(-6) != '&nbsp;') continue;\n")
+        html_buf.write("      span.innerHTML = span.innerHTML.slice(0, -6);\n")
+        html_buf.write("    }\n")
+        html_buf.write("  }\n")
+        html_buf.write("});\n")
+        html_buf.write("}\n")
+        html_buf.write("</script>\n")
 
     html_buf.write('</head>\n')
     html_buf.write('<body>\n')
     html_buf.write('<main>\n')
-    html_buf.write('<section>\n')
+    html_buf.write(f'<section id="page-{page_base}">\n')
+
+    # img.page
+    if epub_page_image_path:
+        # fix: darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
+        html_buf.write(f'<img class="page" src="{epub_page_image_path}">\n')
 
     if page is None: page = []
 
-    for paragraph in page:
+    last_paragraph_idx = len(page) - 1
+    for paragraph_idx, paragraph in enumerate(page):
+        if len(paragraph["lines"]) == 0: continue
+        x1, y1, x2, y2 = scale_bbox(get_bbox_of_paragraph(paragraph))
+        html_buf.write(f'<div class="p" style="left:{x1}px;top:{y1}px;font-size:{paragraph_font_size}px">\n')
+        if args.debug:
+            debug_buf.write(f'<div style="position:absolute;left:{x1}px;top:{y1}px;width:{x2 - x1}px;height:{y2 - y1}px;outline:dotted 1px green"></div>\n')
+        # cursor_x1, cursor_y1 = 0, 0 # relative to paragraph
+        paragraph_x1, paragraph_y1 = x1, y1
+        cursor_x1, cursor_y1 = x1, y1
         last_line_idx = len(paragraph["lines"]) - 1
         for line_idx, line in enumerate(paragraph["lines"]):
             x1, y1, x2, y2 = scale_bbox(line["bbox"])
@@ -421,9 +624,6 @@ def get_text_data_html(
                 # note: this is lossy. word positions are lost
                 w = x2 - x1
                 h = y2 - y1
-                # the monospace font characters have an aspect ratio of 6:10
-                # https://stackoverflow.com/a/19114963/10440128
-                w_char, h_char = 6, 10
                 len_line = sum([len(word["text"]) + 1 for word in line["words"]]) - 1
                 scale_w = (w / w_char) / (h / h_char) / len_line
                 html_buf.write(f'<div style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">')
@@ -437,31 +637,132 @@ def get_text_data_html(
                 html_buf.write('<br/>')
                 html_buf.write('</div>\n')
                 continue
-            html_buf.write(f'<div>\n')
+            # html_buf.write(f'<div>\n')
             last_word_idx = len(line["words"]) - 1
             for word_idx, word in enumerate(line["words"]):
                 x1, y1, x2, y2 = scale_bbox(word["bbox"])
+                x1_rel = x1 - cursor_x1
+                y1_rel = y1 - cursor_y1
                 w = x2 - x1
                 h = y2 - y1
-                # the monospace font characters have an aspect ratio of 6:10
-                # https://stackoverflow.com/a/19114963/10440128
-                w_char, h_char = 6, 10
                 scale_w = (w / w_char) / (h / h_char) / len(word["text"])
+                letter_spacing = (w - (h / h_char * w_char * len(word["text"]))) / len(word["text"])
+                # FIXME why? this just works with font_family == "monospace"
+                if font_family == "Hack":
+                    letter_spacing = ((w * 0.981) - (h / h_char * w_char * len(word["text"]))) / len(word["text"])
+                space_width = h / h_char * w_char
+
                 text = escape(word["text"])
+
+                if not args.text_html_relative_word_positions:
+                    if word_idx < last_word_idx or line_idx < last_line_idx:
+                        if not args.text_html_join_lines and word_idx == last_word_idx: # last word in line
+                            pass
+                        else:
+                            # add space between words in clipboard text
+                            # NOTE this is needed for chrome but not for firefox (etc)
+                            # this is removed for some browsers in DOMContentLoaded
+                            # here we err on the side of "too many spaces"
+                            # when javascript is disabled
+                            text += "&nbsp;"
+
                 if word_idx == last_word_idx: # last word in line
-                    text += "<br>"
+                    if not args.text_html_join_lines:
+                        # text += "<br>"
+                        delta_y1 = 10
+                        if line_idx < last_line_idx:
+                            # change the font-size of <br>
+                            # so the next line's first word has top:0px
+                            # note: word positions are relative to their paragraph
+                            # so we dont need to change the font-size of other <br>
+                            next_line = paragraph["lines"][line_idx + 1]
+                            this_line_y1 = scale_bbox(line["words"][0]["bbox"])[1]
+                            next_line_y1 = scale_bbox(next_line["words"][0]["bbox"])[1]
+                            delta_y1 = next_line_y1 - this_line_y1
+                        if args.text_html_relative_word_positions_dynamic_font_width:
+                            # dynamically scale the text positions with var(--c)
+                            text += f'</span><span style="left:calc({x1_rel}*var(--c));font-size:{delta_y1}px"><br>'
+                        else:
+                            text += f'</span><span style="left:{x1_rel}px;font-size:{delta_y1}px"><br>'
                     if line_idx == last_line_idx: # last line in paragraph
                         text += "<br>"
+                    if paragraph_idx == last_paragraph_idx: # last paragraph in page
+                        text += "<br><br>"
+
+                if 0:
+                    # debug
+                    html_buf.write(f'<!--   cursor_x1: {cursor_x1} -->\n')
+                    html_buf.write(f'<!--   cursor_y1: {cursor_y1} -->\n')
+                    html_buf.write(f'<!--          x1: {x1} -->\n')
+                    html_buf.write(f'<!--          y1: {y1} -->\n')
+                    html_buf.write(f'<!--          x2: {x2} -->\n')
+                    html_buf.write(f'<!--          y2: {y2} -->\n')
+                    html_buf.write(f'<!--           w: {w} -->\n')
+                    html_buf.write(f'<!--           h: {h} -->\n')
+                    html_buf.write(f'<!-- space_width: {space_width} -->\n')
+
+                if args.text_html_relative_word_positions:
+                    # ch_per_px = 22.5
+                    # ch_per_px = h * 0.6018
+                    # em_per_px = 15
+                    # html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px"><span style="transform:scaleX({scale_w})">{text}</span></span>\n')
+                    # html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px;font-stretch:{scale_w}">{text}</span>\n')
+                    # ok
+                    # html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                    # no. positions are wrong...
+                    # html_buf.write(f'<span style="left:{x1_rel/ch_per_px}ch;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                    # no. positions are wrong...
+                    # html_buf.write(f'<span style="left:{x1_rel/em_per_px}em;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+
+                    # this works with:
+                    # chromium on linux
+                    # librewolf on linux
+
+                    # this breaks with:
+                    # tor-browser on linux
+                    # chrome on android
+                    # adblockbrowser on android (based on chrome)
+
+                    # todo:
+                    # firefox on android
+                    # chrome on windows
+                    # firefox on windows
+
+                    if args.text_html_relative_word_positions_dynamic_font_width:
+                        # dynamically scale the text positions with var(--c)
+                        html_buf.write(f'<span style="left:calc({x1_rel}*var(--c));top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
+                    else:
+                        html_buf.write(f'<span style="left:{x1_rel}px;top:{y1_rel}px;font-size:{h}px;letter-spacing:{letter_spacing}px">{text}</span>\n')
                 else:
-                    # add spaces between words
-                    text += "&nbsp;"
-                html_buf.write(f'<span style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">{text}</span>\n')
-            html_buf.write('</div>\n')
+                    html_buf.write(f'<span style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">{text}</span>\n')
+
+                if args.debug:
+                    # debug_buf.write(f'<div style="position:absolute;left:{cursor_x1}px;top:{cursor_y1}px;width:10px;height:50px;background-color:green;opacity:0.5"></div>\n')
+                    debug_buf.write(f'<div style="position:absolute;left:{x1}px;top:{y1}px;width:{w}px;height:{h}px;outline:solid 1px red"></div>\n')
+
+                paragraph_space_width = paragraph_font_size / h_char * w_char
+
+                cursor_x1 = cursor_x1 + w + paragraph_space_width
+
+                if word_idx == last_word_idx: # last word in line
+                    if not args.text_html_join_lines:
+                        cursor_x1 = paragraph_x1
+                        if line_idx < last_line_idx:
+                            next_line = paragraph["lines"][line_idx + 1]
+                            next_line_y1 = scale_bbox(next_line["words"][0]["bbox"])[1]
+                            cursor_y1 = next_line_y1
+
+            # html_buf.write('</div>\n')
+        html_buf.write(f'</div>\n')
     html_buf.write('</section>\n')
     html_buf.write('</main>\n')
     html_buf.write('</body>\n')
     html_buf.write('</html>\n')
-    html_data = html_buf.getvalue().encode("utf-8")
+    html_data = html_buf.getvalue()
+    if args.debug:
+        debug_buf.write('</div>\n')
+        html_data = html_data.replace("<section>\n", "<section>\n" + debug_buf.getvalue())
+    html_data = html_data.encode("utf-8")
     del html_buf
     return html_data
 
@@ -471,6 +772,60 @@ def get_page_base(hocrfile):
     # TODO handle more hocr file extensions
     page_base = re.sub(r"\.hocr(\.html)?$", "", page_base, flags=re.I)
     return page_base
+
+
+def get_bbox_of_page(page):
+    if page is None:
+        return None
+    X1 = Y1 = +math.inf
+    X2 = Y2 = -math.inf
+    for paragraph in page:
+        b = get_bbox_of_paragraph(paragraph)
+        if not b: continue
+        x1, y1, x2, y2 = b
+        if x1 < X1: X1 = x1
+        if y1 < Y1: Y1 = y1
+        if x2 > X2: X2 = x2
+        if y2 > Y2: Y2 = y2
+    if [X1, Y1, X2, Y2] == [+math.inf, +math.inf, -math.inf, -math.inf]:
+        return None
+    return [X1, Y1, X2, Y2]
+
+
+def get_bbox_of_paragraph(paragraph):
+    if paragraph is None or len(paragraph["lines"]) == 0:
+        return None
+    X1 = Y1 = +math.inf
+    X2 = Y2 = -math.inf
+    for line in paragraph["lines"]:
+        b = get_bbox_of_line(line)
+        if not b: continue
+        x1, y1, x2, y2 = b
+        if x1 < X1: X1 = x1
+        if y1 < Y1: Y1 = y1
+        if x2 > X2: X2 = x2
+        if y2 > Y2: Y2 = y2
+    if [X1, Y1, X2, Y2] == [+math.inf, +math.inf, -math.inf, -math.inf]:
+        return None
+    return [X1, Y1, X2, Y2]
+
+
+def get_bbox_of_line(line):
+    if line is None or len(line["words"]) == 0:
+        return None
+    X1 = Y1 = +math.inf
+    X2 = Y2 = -math.inf
+    for word in line["words"]:
+        b = word["bbox"]
+        if not b: continue
+        x1, y1, x2, y2 = b
+        if x1 < X1: X1 = x1
+        if y1 < Y1: Y1 = y1
+        if x2 > X2: X2 = x2
+        if y2 > Y2: Y2 = y2
+    if [X1, Y1, X2, Y2] == [+math.inf, +math.inf, -math.inf, -math.inf]:
+        return None
+    return [X1, Y1, X2, Y2]
 
 
 # --- check if path is an image ---
@@ -1011,6 +1366,70 @@ if __name__ == '__main__':
         help=f'join words of each line to make text searchable across words in html',
         action='store_true',
     )
+
+    # parser.add_argument(
+    #     '--text-html-relative-word-positions', # args.text_html_relative_word_positions
+    #     help=(
+    #         'use relative word positions in html.'
+    #         ' con: this gives wrong word positions in some browsers.'
+    #         ' pro: this enables text search across words.'
+    #     ),
+    #     action='store_true',
+    # )
+
+    parser.add_argument(
+        '--text-html-absolute-word-positions', # args.text_html_absolute_word_positions
+        help=(
+            'use absolute word positions in html.'
+            ' pro: this gives correct word positions in all browsers.'
+            # https://groups.google.com/a/chromium.org/g/chromium-discuss/c/KBT__5UhptE
+            # searching text in HTML spans with absolute positions
+            ' con: this breaks text search across words.'
+        ),
+        action='store_true',
+    )
+
+    # TODO how does this work with different fonts
+    # works: chrome firefox
+    # fails: tor-browser (error changes with zoom level)
+    # args.text_html_relative_word_positions_dynamic_font_width = False
+
+    # TODO?
+    # NOTE this requires javascript
+    # works: chrome
+    # fails: firefox tor-browser
+    # args.text_html_relative_word_positions_dynamic_font_width = True
+
+    parser.add_argument(
+        '--text-html-relative-word-positions-dynamic-font-width', # args.text_html_relative_word_positions_dynamic_font_width
+        help='use javascript to adjust font width in html',
+        action='store_true',
+    )
+
+    # parser.add_argument(
+    #     '--text-html-relative-word-positions-static-font-width', # args.text_html_relative_word_positions_static_font_width
+    #     help='do not use javascript to adjust font width in html',
+    #     action='store_true',
+    # )
+
+    # parser.add_argument(
+    #     '--text-html-bundle-font', # args.text_html_bundle_font
+    #     help='use a bundled monospace font (Cousine-Regular.woff2) instead of the system monospace font in html',
+    #     action='store_true',
+    # )
+
+    parser.add_argument(
+        '--text-html-join-lines', # args.text_html_join_lines
+        help=(
+            'do not add linebreaks after lines in html.'
+            ' con: the print layout is not preserved in the clipboard text.'
+            # https://groups.google.com/a/chromium.org/g/chromium-discuss/c/CJ2Ei2Khb4I
+            # text-search across linebreaks should normalize whitespace
+            ' pro: this enables text search across lines.'
+        ),
+        action='store_true',
+    )
+
     parser.add_argument(
         '--text-svg-split-lines', # args.text_svg_split_lines
         help=(
@@ -1037,6 +1456,13 @@ if __name__ == '__main__':
         default=default_max_workers,
         type=int,
     )
+
+    parser.add_argument(
+        '--debug', # args.debug
+        help='add debug info to the output',
+        action='store_true',
+    )
+
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
@@ -1054,5 +1480,16 @@ if __name__ == '__main__':
     if args.canonical_url_base:
         if not args.canonical_url_base.endswith("/"):
             args.canonical_url_base += "/"
+
+    # args.text_html_absolute_word_positions = not args.text_html_relative_word_positions
+    args.text_html_relative_word_positions = not args.text_html_absolute_word_positions
+
+    if not args.text_html_relative_word_positions:
+        args.text_html_relative_word_positions_dynamic_font_width = False
+        args.text_html_relative_word_positions_static_font_width = False
+    else:
+        args.text_html_relative_word_positions_static_font_width = not args.text_html_relative_word_positions_dynamic_font_width
+
+    args.text_html_bundle_font = False
 
     process_files_hocr2epubfxl(args)
