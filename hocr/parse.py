@@ -3,6 +3,7 @@ import re
 import math
 
 from .util import open_if_required, iterparse_tags, HOCR_SCHEMA
+from .util import elem_inner_text
 
 
 WRITING_DIRECTION_UNSPECIFIED = 0
@@ -164,21 +165,8 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
                     wordbased = False
 
                 if wordbased:
-                    wword = word
-                    # Words may contains additional nodes like <em>
-                    while True:
-                        children = list(wword)
-                        if len(children) == 0:
-                            break
-
-                        if len(children) > 1:
-                            raise ValueError('Not character based but word has multiple children?')
-
-                        wword = children[0]
-
-                    rawtext = wword.text
-
-                    if wword.text is None:
+                    rawtext = elem_inner_text(word)
+                    if rawtext == "":
                         raise ValueError('Word with no text value?')
 
                 box = BBOX_REGEX.search(word.attrib['title']).group(1).split()

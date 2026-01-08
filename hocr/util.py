@@ -32,6 +32,12 @@ def elem_tostring(elem, xml_declaration=None, short_empty_elements=False):
                              xml_declaration=xml_declaration)
     return s
 
+def elem_inner_text(elem):
+    buf = io.StringIO()
+    for text in elem.itertext():
+        buf.write(text)
+    return buf.getvalue()
+
 def open_if_required(fd_or_path):
     """
     Opens a file if `fd_or_path` is a `str`, otherwise returns `fd_or_path`.
