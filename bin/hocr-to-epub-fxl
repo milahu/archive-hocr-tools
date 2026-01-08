@@ -62,11 +62,17 @@ from hocr.parse import hocr_page_iterator
 from hocr.parse import hocr_page_to_word_data
 from hocr.text import hocr_page_text
 from hocr.text import hocr_word_data_bbox
+from hocr.util import register_and_nuke_xhtml_namespace
 
 import PIL.features
 from PIL import Image
 from tqdm import tqdm
 import psutil
+
+
+# a: aaa<html:sup>bbb</html:sup>ccc
+# b: aaa<sup>bbb</sup>ccc
+register_and_nuke_xhtml_namespace()
 
 
 hocrfile_extensions = ("hocr", "html")
@@ -664,7 +670,8 @@ def get_text_data_html(
                 scale_w = (w / w_char) / (h / h_char) / len_line
                 html_buf.write(f'<div style="left:{x1}px;top:{y1}px;font-size:{h}px;transform:scaleX({scale_w})">')
                 for word_idx, word in enumerate(line["words"]):
-                    text = escape(word["text"])
+                    # text = escape(word["text"])
+                    text = word["html"]
                     if word_idx > 0:
                         html_buf.write(" ")
                     html_buf.write(text)
@@ -688,7 +695,16 @@ def get_text_data_html(
                     letter_spacing = ((w * 0.981) - (h / h_char * w_char * len(word["text"]))) / len(word["text"])
                 space_width = h / h_char * w_char
 
-                text = escape(word["text"])
+                # NOTE when word["html"] contains a superscript like
+                # aaa<sup>bbb</sup>ccc
+                # then the y1 position is the top of the superscript
+                # and the normal text is moved down
+                # https://stackoverflow.com/questions/1530685
+                # here we cannot change the font-size
+                # because that would break positions of following words
+
+                # text = escape(word["text"])
+                text = word["html"]
 
                 if not args.text_html_relative_word_positions:
                     if word_idx < last_word_idx or line_idx < last_line_idx:
