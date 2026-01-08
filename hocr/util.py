@@ -38,6 +38,28 @@ def elem_inner_text(elem):
         buf.write(text)
     return buf.getvalue()
 
+def elem_inner_html(elem):
+    buf = io.StringIO()
+    if elem.text:
+        buf.write(elem.text)
+    # XML -> HTML
+    # see also: hocr.util.register_and_nuke_xhtml_namespace
+    elem_remove_xmlns(elem)
+    for child in elem:
+        buf.write(ElementTree.tostring(
+            child,
+            # encoding="UTF-8", # bytes
+            encoding="unicode", # str
+        ))
+    return buf.getvalue()
+
+def elem_remove_xmlns(elem):
+    # a: aa<sup xmlns:html="http://www.w3.org/1999/xhtml">bb</sup>cc
+    # b: aa<sup>bb</sup>cc
+    elem.tag = elem.tag.split("}", 1)[-1]
+    for e in elem:
+        elem_remove_xmlns(e)
+
 def open_if_required(fd_or_path):
     """
     Opens a file if `fd_or_path` is a `str`, otherwise returns `fd_or_path`.

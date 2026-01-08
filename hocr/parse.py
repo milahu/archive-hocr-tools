@@ -4,6 +4,7 @@ import math
 
 from .util import open_if_required, iterparse_tags, HOCR_SCHEMA
 from .util import elem_inner_text
+from .util import elem_inner_html
 
 
 WRITING_DIRECTION_UNSPECIFIED = 0
@@ -192,6 +193,7 @@ def hocr_page_to_word_data(hocr_page, scaler=1):
 
                 word_data.append({'bbox': box, 'text': rawtext, 'fontsize':
                     x_fsize, 'writing_direction': writing_direction,
+                    'html': elem_inner_html(word),
                     'confidence': conf})
 
             if linebox == [0.0, 0.0, 0.0, 0.0]:
