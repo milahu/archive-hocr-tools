@@ -56,7 +56,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import importlib.resources
 import urllib.parse
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from hocr.parse import hocr_page_iterator
 from hocr.parse import hocr_page_to_word_data
