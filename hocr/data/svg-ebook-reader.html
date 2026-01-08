@@ -105,7 +105,7 @@
 </div>
 
 <div id="viewer" class="single-page">
-  <iframe id="page1"></iframe>
+  <iframe id="page1" enable-annotation></iframe>
 </div>
 
 <script>
@@ -127,6 +127,9 @@
   function createIframe(id) {
     const iframe = document.createElement('iframe');
     iframe.id = id;
+    // enable hypothesis annotations in iframe
+    // https://h.readthedocs.io/projects/client/en/latest/publishers/embedding.html
+    iframe.setAttribute("enable-annotation", "");
     viewer.appendChild(iframe);
     return iframe;
   }
