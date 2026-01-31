@@ -1304,6 +1304,22 @@ def process_files_hocr2epubfxl(args):
         html_data = html_buf.getvalue()
         zf.writestr(html_path, html_data, compress_type=zipfile.ZIP_DEFLATED)
 
+        # join all text
+        text_html_path = "OEBPS/fulltext.html"
+        text_html_data = bytes(html_data) # copy
+        # remove all images
+        text_html_data = re.sub(rb'<img.+?>', b"", text_html_data)
+        # remove paragraph positions
+        text_html_data = re.sub(rb'<div class="p" style=".+?">', b'<div class="p">', text_html_data)
+        # remove word positions
+        text_html_data = re.sub(rb'<span style=".+?">(.+?)</span>\n', rb'\1 ', text_html_data)
+        text_html_data = re.sub(rb'<span style=".+?">(.+?)</span><br>', rb'\1<br>', text_html_data)
+        text_html_data = re.sub(rb'</span><span style=".+?"><br>', rb'<br>', text_html_data)
+        # make it load 1000 times faster
+        text_html_data = re.sub(rb'<style.*?>.+?</style>', b"", text_html_data, flags=re.DOTALL)
+        text_html_data = re.sub(rb'<script>.+?</script>', b"", text_html_data, flags=re.DOTALL)
+        zf.writestr(text_html_path, text_html_data, compress_type=zipfile.ZIP_DEFLATED)
+
         # reader: split pages view
         reader_html_data = importlib.resources.read_binary("hocr", "data/svg-ebook-reader.html")
         # reader_html_data = importlib.resources.read_binary("hocr", f"data/{args.text_format}-ebook-reader.html")
