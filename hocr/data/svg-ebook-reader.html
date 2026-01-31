@@ -147,6 +147,15 @@
     if (twoPageMode && !page2) page2 = createIframe('page2');
     if (!twoPageMode && page2) page2.remove();
 
+    // reduce white flash on page load in dark mode
+    // wait extra 100ms to avoid white flash from text layer
+    page1.style.visibility = "hidden";
+    page1.onload = () => { setTimeout(() => { page1.style.visibility = "visible"; }, 100); };
+    if (twoPageMode) {
+      page2.style.visibility = "hidden";
+      page2.onload = () => { setTimeout(() => { page2.style.visibility = "visible"; }, 100); };
+    }
+
     if (twoPageMode) {
       // Compute spread: left = even page
       let leftIndex, rightIndex;
