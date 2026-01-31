@@ -165,7 +165,8 @@ def process_page(hocrfile, args):
     cached_page_image_path = f"{page_image_path}.q{args.quality}.s{args.scale}.{args.image_format}"
 
     # --- check image cache ---
-    if os.path.exists(cached_page_image_path):
+    getmtime = os.path.getmtime
+    if os.path.exists(cached_page_image_path) and getmtime(cached_page_image_path) > getmtime(page_image_path):
         # read cache
         with open(cached_page_image_path, "rb") as f:
             img_data = f.read()
