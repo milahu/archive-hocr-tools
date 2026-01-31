@@ -738,7 +738,7 @@ def get_text_data_html(
                             text += f'</span><span style="left:{x1_rel}px;font-size:{delta_y1}px"><br>'
                     if line_idx == last_line_idx: # last line in paragraph
                         text += "<br>"
-                    if paragraph_idx == last_paragraph_idx: # last paragraph in page
+                    if line_idx == last_line_idx and paragraph_idx == last_paragraph_idx: # last paragraph in page
                         text += "<br><br>"
 
                 if 0:
