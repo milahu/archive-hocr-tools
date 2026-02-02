@@ -1,11 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>SVG eBook Reader</title>
-<meta name="generator" content="hocr-to-epub-fxl">
-<link rel="canonical" href="">
+<meta name="generator" content="hocr-to-epub-fxl"/>
+<link rel="canonical" href=""/>
 <style>
   body {
     margin: 0;
@@ -98,18 +98,20 @@
 <div id="menu-bar">
   <button id="prevPage">Previous</button>
   <button id="nextPage">Next</button>
-  <input type="number" id="pageNumber" min="1" value="1">
+  <input type="number" id="pageNumber" min="1" value="1"/>
   <span id="totalPages"></span>
   <button id="toggleMode">Two-Page Mode</button>
   <a href="OEBPS/">All Pages</a>
-  <a href="OEBPS/fulltext.html">Full Text</a>
+  <a href="OEBPS/fulltext.xhtml">Full Text</a>
 </div>
 
 <div id="viewer" class="single-page">
-  <iframe id="page1" enable-annotation></iframe>
+  <iframe id="page1" enable-annotation=""></iframe>
 </div>
 
 <script>
+  // <![CDATA[
+
   // --- CONFIG: list of SVG files ---
   const svgFiles = [ /* TODO */ ];
 
@@ -286,6 +288,8 @@
       goToPage(pageFromHash, true);
     }
   });
+
+  // ]]>
 
 </script>
 

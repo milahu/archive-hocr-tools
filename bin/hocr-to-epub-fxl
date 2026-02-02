@@ -75,7 +75,7 @@ import psutil
 register_and_nuke_xhtml_namespace()
 
 
-hocrfile_extensions = ("hocr", "html")
+hocrfile_extensions = ("hocr", "html", "xhtml")
 
 # use imagemagick to compare avif qualities around 20%
 r'''
@@ -129,11 +129,11 @@ WEBP_METHOD = 6
 #     SVG annotations are blocked by https://github.com/hypothesis/h/issues/9990
 #   clipboard text in firefox
 
-DEFAULT_TEXT_FORMAT = "html"
-TEXT_FORMAT_LIST = ["svg", "html"]
+DEFAULT_TEXT_FORMAT = "xhtml"
+TEXT_FORMAT_LIST = ["svg", "xhtml"]
 
 media_type_by_text_format = {
-    "html": "application/xhtml+xml",
+    "xhtml": "application/xhtml+xml",
     "svg": "image/svg+xml",
 }
 
@@ -236,7 +236,7 @@ def process_page(hocrfile, args):
         img_data = None
 
     get_text_data_by_text_format = {
-        "html": get_text_data_html,
+        "xhtml": get_text_data_xhtml,
         "svg": get_text_data_svg,
     }
     get_text_data = get_text_data_by_text_format[args.text_format]
@@ -316,7 +316,7 @@ def get_text_data_svg(
     svg_buf.write('</rdf:RDF>\n')
     svg_buf.write('</metadata>\n')
 
-    svg_buf.write('<style>\n')
+    svg_buf.write('<style type="text/css">\n')
     svg_buf.write('text, tspan { dominant-baseline: mathematical; fill: transparent; }\n')
     svg_buf.write('svg { background: #e2e2e2; }\n') # 90% white
     # invert colors in dark mode
@@ -366,7 +366,7 @@ def get_text_data_svg(
     return svg_data
 
 
-def get_text_data_html(
+def get_text_data_xhtml(
         hocrfile,
         page,
         page_w,
@@ -378,7 +378,7 @@ def get_text_data_html(
 
     page_base = get_page_base(hocrfile)
 
-    # --- build HTML ---
+    # --- build XHTML5 ---
     html_buf = io.StringIO()
     if args.debug:
         debug_buf = io.StringIO()
@@ -391,15 +391,12 @@ def get_text_data_html(
         del args_dict["add_files"]
         debug_buf.write('<!-- args = ' + json.dumps(args_dict, indent=2) + ' -->\n')
 
+    # EPUB3 supports XHTML5
     html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
-    html_buf.write(
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"\n'
-        ' "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">\n'
-    )
+    html_buf.write('<!DOCTYPE html>\n')
     # TODO set metadata: lang
     html_buf.write(f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
     html_buf.write('<head>\n')
-    html_buf.write('<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />\n')
     # set metadata: title
     html_buf.write(f'<title>{escape(args.doc_title)} ({page_base})</title>\n')
     html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
@@ -411,6 +408,7 @@ def get_text_data_html(
         canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
         html_buf.write(f'<link rel="canonical" href="{canonical_url}"/>\n')
 
+    # TODO refactor html style
     html_buf.write('<style type="text/css">\n')
 
     html_buf.write('* {\n')
@@ -438,19 +436,17 @@ def get_text_data_html(
     html_buf.write(' }\n')
     html_buf.write('}\n')
 
-    html_buf.write('main {\n')
+    html_buf.write('body {\n')
     # html_buf.write(' outline: solid 10px red;\n') # debug # ok
     html_buf.write(' width: 100%;\n') # fit iframe width
     # html_buf.write(' overflow: hidden;\n') # no scrollbars
     html_buf.write('}\n')
 
-    # section = page
-    html_buf.write(f'section#page-{page_base} {{\n')
+    # div.page = page
+    html_buf.write(f'div.page {{\n')
     # FIXME scale to fit width (at 100% browser zoom level)
     # html_buf.write(' outline: solid 10px green;\n') # debug
     html_buf.write(' position: relative;\n')
-    html_buf.write(f' width: {page_w}px;\n')
-    html_buf.write(f' height: {page_h}px;\n')
     if args.text_html_relative_word_positions:
         html_buf.write(' overflow: hidden;\n')
     # no. darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
@@ -466,12 +462,12 @@ def get_text_data_html(
     # html_buf.write(f' transform: scale(0.89);\n') # scale to fit width
     html_buf.write(' margin: auto;\n') # center the page horizontally
     html_buf.write('}\n')
-    # html_buf.write('section:hover {\n')
+    # html_buf.write('div.page:hover {\n')
     # html_buf.write(' outline: solid 1px black;\n')
     # html_buf.write('}\n')
 
     if 1:
-        html_buf.write('section > img.page {\n')
+        html_buf.write('div.page > img.page {\n')
         html_buf.write(' position: absolute;\n')
         html_buf.write(' left: 0;\n')
         html_buf.write(' top: 0;\n')
@@ -482,7 +478,7 @@ def get_text_data_html(
 
     # # invert image colors in dark mode
     # html_buf.write('@media (prefers-color-scheme: dark) {\n')
-    # html_buf.write(' section > img.page { filter: invert(); }\n')
+    # html_buf.write(' div.page > img.page { filter: invert(); }\n')
     # html_buf.write('}\n')
 
     # div.p = paragraph
@@ -514,7 +510,7 @@ def get_text_data_html(
 
     # invert image colors in dark mode
     html_buf.write('@media (prefers-color-scheme: dark) {\n')
-    html_buf.write(' section { filter: invert(); }\n')
+    html_buf.write(' div.page { filter: invert(); }\n')
     html_buf.write('}\n')
 
     # monospace fonts have an average character aspect ratio of 6:10
@@ -578,8 +574,9 @@ def get_text_data_html(
 
     if args.text_html_relative_word_positions_dynamic_font_width:
         # dynamically scale the text positions with var(--c)
-        # FIXME run this only once in the "all pages" index.html
-        html_buf.write("<script>\n")
+        # FIXME run this only once in the "all pages" index.xhtml
+        html_buf.write('<script type="application/javascript">\n')
+        html_buf.write('// <![CDATA[\n')
         html_buf.write("if (1) {\n")
         html_buf.write("    const canvas = document.createElement('canvas');\n")
         html_buf.write("    const measure = canvas.getContext('2d');\n")
@@ -604,11 +601,13 @@ def get_text_data_html(
         html_buf.write("        document.documentElement.style.setProperty('--c', `${charWidthFactor}px`);\n")
         html_buf.write("    }\n")
         html_buf.write("}\n")
+        html_buf.write('// ]]>\n')
         html_buf.write("</script>\n")
 
     if 1:
         # detect user agent
-        html_buf.write("<script>\n")
+        html_buf.write('<script type="application/javascript">\n')
+        html_buf.write('// <![CDATA[\n')
         html_buf.write("if (!globalThis._userAgentDetectionIsDone) {\n")
         html_buf.write("globalThis._userAgentDetectionIsDone = true;\n")
         html_buf.write("(() => {\n")
@@ -629,24 +628,24 @@ def get_text_data_html(
         html_buf.write("  if (globalThis._userAgentIsFirefox) {\n")
         html_buf.write("    console.log('removing &nbsp; after words to fix clipboard text');\n")
         html_buf.write("    for (const span of document.querySelectorAll('span')) {\n")
-        # some spans end with "<br>"
+        # some spans end with "<br/>"
         html_buf.write("      if (span.innerHTML.slice(-6) != '&nbsp;') continue;\n")
         html_buf.write("      span.innerHTML = span.innerHTML.slice(0, -6);\n")
         html_buf.write("    }\n")
         html_buf.write("  }\n")
         html_buf.write("});\n")
         html_buf.write("}\n")
+        html_buf.write('// ]]>\n')
         html_buf.write("</script>\n")
 
     html_buf.write('</head>\n')
     html_buf.write('<body>\n')
-    html_buf.write('<main>\n')
-    html_buf.write(f'<section id="page-{page_base}">\n')
+    html_buf.write(f'<div class="page" id="page-{page_base}" style="width: {page_w}px; height: {page_h}px">\n')
 
     # img.page
     if epub_page_image_path:
         # fix: darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
-        html_buf.write(f'<img class="page" src="{epub_page_image_path}">\n')
+        html_buf.write(f'<img class="page" alt="" src="{epub_page_image_path}" style="width: {page_w}px; height: {page_h}px"/>\n')
 
     if page is None: page = []
 
@@ -721,26 +720,26 @@ def get_text_data_html(
 
                 if word_idx == last_word_idx: # last word in line
                     if not args.text_html_join_lines:
-                        # text += "<br>"
+                        # text += "<br/>"
                         delta_y1 = 10
                         if line_idx < last_line_idx:
-                            # change the font-size of <br>
+                            # change the font-size of <br/>
                             # so the next line's first word has top:0px
                             # note: word positions are relative to their paragraph
-                            # so we dont need to change the font-size of other <br>
+                            # so we dont need to change the font-size of other <br/>
                             next_line = paragraph["lines"][line_idx + 1]
                             this_line_y1 = scale_bbox(line["words"][0]["bbox"])[1]
                             next_line_y1 = scale_bbox(next_line["words"][0]["bbox"])[1]
                             delta_y1 = next_line_y1 - this_line_y1
                         if args.text_html_relative_word_positions_dynamic_font_width:
                             # dynamically scale the text positions with var(--c)
-                            text += f'</span><span style="left:calc({x1_rel}*var(--c));font-size:{delta_y1}px"><br>'
+                            text += f'</span><span style="left:calc({x1_rel}*var(--c));font-size:{delta_y1}px"><br/>'
                         else:
-                            text += f'</span><span style="left:{x1_rel}px;font-size:{delta_y1}px"><br>'
+                            text += f'</span><span style="left:{x1_rel}px;font-size:{delta_y1}px"><br/>'
                     if line_idx == last_line_idx: # last line in paragraph
-                        text += "<br>"
+                        text += "<br/>"
                     if line_idx == last_line_idx and paragraph_idx == last_paragraph_idx: # last paragraph in page
-                        text += "<br><br>"
+                        text += "<br/><br/>"
 
                 if 0:
                     # debug
@@ -807,14 +806,17 @@ def get_text_data_html(
 
             # html_buf.write('</div>\n')
         html_buf.write(f'</div>\n')
-    html_buf.write('</section>\n')
-    html_buf.write('</main>\n')
+    html_buf.write('</div>\n') # close <div class="page"
     html_buf.write('</body>\n')
     html_buf.write('</html>\n')
     html_data = html_buf.getvalue()
     if args.debug:
         debug_buf.write('</div>\n')
-        html_data = html_data.replace("<section>\n", "<section>\n" + debug_buf.getvalue())
+        html_data = re.sub(
+            r'<div class="page" (.+?)>\n',
+            r'<div class="page" \1>\n' + debug_buf.getvalue(),
+            html_data
+        )
     html_data = html_data.encode("utf-8")
     del html_buf
     return html_data
@@ -823,7 +825,7 @@ def get_text_data_html(
 def get_page_base(hocrfile):
     page_base = os.path.basename(hocrfile)
     # TODO handle more hocr file extensions
-    page_base = re.sub(r"\.hocr(\.html)?$", "", page_base, flags=re.I)
+    page_base = re.sub(r"\.hocr(\.html|\.xhtml)?$", "", page_base, flags=re.I)
     return page_base
 
 
@@ -1088,10 +1090,10 @@ def process_files_hocr2epubfxl(args):
             "  </metadata>\n"
             "  <manifest>\n"
             "    <item id='ncx' href='toc.ncx' media-type='application/x-dtbncx+xml'/>\n"
-            f"    {''.join(manifest_items)}\n"
+            f"    {'\n    '.join(manifest_items)}\n"
             "  </manifest>\n"
             "  <spine toc='ncx'>\n"
-            f"    {''.join(spine_items)}\n"
+            f"    {'\n    '.join(spine_items)}\n"
             "  </spine>\n"
             "</package>\n"
         )
@@ -1210,73 +1212,104 @@ def process_files_hocr2epubfxl(args):
             del file_bytes
 
         # join all pages
-        html_path = "OEBPS/index.html"
+        html_path = "OEBPS/index.xhtml"
         html_buf = io.BytesIO()
-        # EPUB3 supports HTML5
+        # EPUB3 supports XHTML5
         # https://validator.w3.org/nu/#textarea
+        html_buf.write(b'<?xml version="1.0" encoding="UTF-8"?>\n')
         html_buf.write(b'<!DOCTYPE html>\n')
         # TODO set metadata: lang
-        html_buf.write(b'<html lang="en">\n')
+        html_buf.write(b'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
         html_buf.write(b"<head>\n")
-        html_buf.write(b'<meta charset="utf-8">\n')
         # set metadata: title
         html_buf.write(b'<title>')
         html_buf.write(escape(args.doc_title).encode("utf8"))
         html_buf.write(b'</title>\n')
-        html_buf.write(b'<meta name="generator" content="hocr-to-epub-fxl">\n')
+        html_buf.write(b'<meta name="generator" content="hocr-to-epub-fxl" />\n')
 
         if args.canonical_url_base:
             # set metadata: canonical URL
-            # NOTE this short URL assumes that the HTTP server serves index.html at the directory URL
+            # NOTE this short URL assumes that the HTTP server serves index.xhtml at the directory URL
             canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/")
             canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
-            html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'">\n')
+            html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>\n')
 
-        html_buf.write(b'<style>\n')
-        html_buf.write(b'html, body {\n')
+        # TODO refactor html style
+        html_buf.write(b'<style type="text/css">\n')
+        html_buf.write(b'* {\n')
         html_buf.write(b' margin: 0;\n')
         html_buf.write(b' padding: 0;\n')
+        html_buf.write(b' font-size: 100%;\n')
+        html_buf.write(b' line-height: 100%;\n')
         html_buf.write(b'}\n')
         html_buf.write(b'body {\n')
-        html_buf.write(b' background: #e2e2e2;\n') # 90% white
-        html_buf.write(b' display: flex;\n')
-        html_buf.write(b' flex-direction: column;\n')
-        html_buf.write(b' align-items: center;\n')
-        html_buf.write(b' align-content: center;\n')
         html_buf.write(b' background: gray;\n')
+        html_buf.write(b' width: 100%;\n')
         html_buf.write(b'}\n')
-        html_buf.write(b'svg {\n')
+        html_buf.write(b'div.page {\n')
+        html_buf.write(b' position: relative;\n')
+        html_buf.write(b' overflow: hidden;\n')
+        html_buf.write(b' transform-origin: top left;\n')
+        html_buf.write(b' margin: auto;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.page > img.page {\n')
+        html_buf.write(b' position: absolute;\n')
+        html_buf.write(b' left: 0;\n')
+        html_buf.write(b' top: 0;\n')
+        html_buf.write(b' margin: 0;\n')
+        html_buf.write(b' user-select: none;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.p {\n')
+        html_buf.write(b' position: absolute;\n')
+        html_buf.write(b' white-space: nowrap;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.p > div, span {\n')
+        html_buf.write(b' display: inline;\n')
+        html_buf.write(b' position: relative;\n')
+        html_buf.write(b' color: transparent;\n')
+        html_buf.write(b' white-space: nowrap;\n')
+        html_buf.write(b' line-height: 1;\n')
+        html_buf.write(b' transform-origin: left center;\n')
+        html_buf.write(b' vertical-align: top;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'@media (prefers-color-scheme: dark) {\n')
+        html_buf.write(b' div.page { filter: invert(); }\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.p, div.p > div, span {\n')
+        html_buf.write(b' font-family: monospace;\n')
+        html_buf.write(b' font-variant-ligatures: none;\n')
+        html_buf.write(b' font-feature-settings: "liga" 0;\n')
+        html_buf.write(b' font-kerning: none;\n')
+        html_buf.write(b'}\n')
+        html_buf.write(b'div.page {\n')
         # html_buf.write(b' border-bottom: solid 1px gray;\n')
         # https://stackoverflow.com/a/18841365/10440128
         html_buf.write(b' box-shadow: 0 -1px 0 gray;\n') # outline-bottom
         html_buf.write(b'}\n')
-        # invert colors in dark mode
-        html_buf.write(b'@media (prefers-color-scheme: dark) {\n')
-        html_buf.write(b' body { background: #1b1b1b; }\n') # 10% white
-        html_buf.write(b'}\n')
         html_buf.write(b'@page {\n')
-        html_buf.write(b' size: A4 portrait;\n')
+        # html_buf.write(b' size: A4 portrait;\n')
         html_buf.write(b' margin: 0;\n')
         html_buf.write(b'}\n')
         html_buf.write(b'@media print {\n')
         html_buf.write(b' body {\n')
         html_buf.write(b'  background: none;\n')
         html_buf.write(b' }\n')
-        html_buf.write(b" svg {\n")
+        html_buf.write(b" div.page {\n")
         html_buf.write(b'  box-shadow: none;\n')
-        html_buf.write(b'  display: block;\n')
-        # html_buf.write(b'  max-width: 100%;\n')
-        # html_buf.write(b'  max-height: 95vh;\n')
         html_buf.write(b'  max-width: 100vw;\n')
         html_buf.write(b'  max-height: 100vh;\n')
-        html_buf.write(b'  width: auto;\n')
-        html_buf.write(b'  height: auto;\n')
-        html_buf.write(b'  margin: 0 auto;\n')
+        # html_buf.write(b'  width: auto;\n')
+        # html_buf.write(b'  height: auto;\n')
+        # html_buf.write(b'  margin: 0 auto;\n')
         html_buf.write(b'  page-break-before: always;\n')
         html_buf.write(b'  break-before: page;\n')
-        html_buf.write(b'  box-sizing: border-box;\n')
+        # html_buf.write(b'  box-sizing: border-box;\n')
         html_buf.write(b" }\n")
-        html_buf.write(b" svg:first-of-type {\n")
+        html_buf.write(b" div.page > img.page {\n")
+        html_buf.write(b'  max-width: 100vw;\n')
+        html_buf.write(b'  max-height: 100vh;\n')
+        html_buf.write(b" }\n")
+        html_buf.write(b" div.page:first-child {\n")
         html_buf.write(b'  page-break-before: auto;\n')
         html_buf.write(b'  break-before: auto;\n')
         html_buf.write(b'\n')
@@ -1293,6 +1326,7 @@ def process_files_hocr2epubfxl(args):
             # no. chromium ignores extra xml processing instructions in the html body
             # if svg_data.startswith(xml_header):
             #     svg_data = svg_data[len(xml_header):]
+            svg_data = re.sub(rb".*<body>\n(.*)</body>.*", rb"\1", svg_data, flags=re.DOTALL)
             html_buf.write(svg_data)
         # append pages to joined html file
         for page_idx, page_path in enumerate(appended_page_path_list):
@@ -1305,19 +1339,22 @@ def process_files_hocr2epubfxl(args):
         zf.writestr(html_path, html_data, compress_type=zipfile.ZIP_DEFLATED)
 
         # join all text
-        text_html_path = "OEBPS/fulltext.html"
+        text_html_path = "OEBPS/fulltext.xhtml"
         text_html_data = bytes(html_data) # copy
         # remove all images
         text_html_data = re.sub(rb'<img.+?>', b"", text_html_data)
+        # remove page positions
+        text_html_data = re.sub(rb'<div class="page" id="(.*?)" style=".+?">', rb'<div class="page" id="\1">', text_html_data)
         # remove paragraph positions
         text_html_data = re.sub(rb'<div class="p" style=".+?">', b'<div class="p">', text_html_data)
         # remove word positions
+        # <span style="left:50.703125px;top:0.5px;font-size:33.5px;letter-spacing:-0.356201171875px">Verhaltensweisen</span><span style="left:50.703125px;font-size:53.5px"><br/></span>
         text_html_data = re.sub(rb'<span style=".+?">(.+?)</span>\n', rb'\1 ', text_html_data)
-        text_html_data = re.sub(rb'<span style=".+?">(.+?)</span><br>', rb'\1<br>', text_html_data)
-        text_html_data = re.sub(rb'</span><span style=".+?"><br>', rb'<br>', text_html_data)
+        # text_html_data = re.sub(rb'<span style=".+?">(.+?)</span><br/>', rb'\1<br/>\n', text_html_data)
+        text_html_data = re.sub(rb'</span><span style=".+?">((?:<br/>)+) ', rb'\1\n', text_html_data)
         # make it load 1000 times faster
         text_html_data = re.sub(rb'<style.*?>.+?</style>', b"", text_html_data, flags=re.DOTALL)
-        text_html_data = re.sub(rb'<script>.+?</script>', b"", text_html_data, flags=re.DOTALL)
+        text_html_data = re.sub(rb'<script.*?>.+?</script>', b"", text_html_data, flags=re.DOTALL)
         zf.writestr(text_html_path, text_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
         # reader: split pages view
@@ -1338,14 +1375,14 @@ def process_files_hocr2epubfxl(args):
 
         if args.canonical_url_base:
             # set metadata: canonical URL
-            # NOTE this short URL assumes that the HTTP server serves index.html at the directory URL
+            # NOTE this short URL assumes that the HTTP server serves index.xhtml at the directory URL
             canonical_url = args.canonical_url_base
             canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
-            a = b'<link rel="canonical" href="">'
-            b = b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'">'
+            a = b'<link rel="canonical" href=""/>'
+            b = b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>'
             reader_html_data = reader_html_data.replace(a, b)
 
-        zf.writestr("index.html", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
+        zf.writestr("index.xhtml", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
         # add empty .nojekyll file for github-pages
         zf.writestr(".nojekyll", "", compress_type=zipfile.ZIP_STORED)
@@ -1537,6 +1574,8 @@ if __name__ == '__main__':
     assert 0.01 <= args.scale <= 100
     assert 1 <= args.quality <= 100
     assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
+    if args.text_format == "html":
+        args.text_format = "xhtml"
     assert args.text_format in TEXT_FORMAT_LIST
     assert 1 <= args.jobs <= max_max_workers, f"jobs must be between 1 and {max_max_workers}"
     for src_path in args.infiles:
