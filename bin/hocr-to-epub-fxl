@@ -1212,7 +1212,7 @@ def process_files_hocr2epubfxl(args):
             del file_bytes
 
         # join all pages
-        html_path = "OEBPS/index.xhtml"
+        html_path = "OEBPS/allpages.xhtml"
         html_buf = io.BytesIO()
         # EPUB3 supports XHTML5
         # https://validator.w3.org/nu/#textarea
@@ -1229,7 +1229,7 @@ def process_files_hocr2epubfxl(args):
 
         if args.canonical_url_base:
             # set metadata: canonical URL
-            canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/index.xhtml")
+            canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/allpages.xhtml")
             canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
             html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>\n')
 
