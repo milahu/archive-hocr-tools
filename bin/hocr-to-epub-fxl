@@ -1229,8 +1229,7 @@ def process_files_hocr2epubfxl(args):
 
         if args.canonical_url_base:
             # set metadata: canonical URL
-            # NOTE this short URL assumes that the HTTP server serves index.xhtml at the directory URL
-            canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/")
+            canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/index.xhtml")
             canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
             html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>\n')
 
@@ -1375,8 +1374,7 @@ def process_files_hocr2epubfxl(args):
 
         if args.canonical_url_base:
             # set metadata: canonical URL
-            # NOTE this short URL assumes that the HTTP server serves index.xhtml at the directory URL
-            canonical_url = args.canonical_url_base
+            canonical_url = args.canonical_url_base + "index.xhtml"
             canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
             a = b'<link rel="canonical" href=""/>'
             b = b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>'
