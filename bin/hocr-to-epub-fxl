@@ -985,6 +985,21 @@ def get_compress_type(file_bytes: bytes, threshold: float = 0.95):
     return zipfile.ZIP_STORED
 
 
+def to_utc_string(dt_str: str) -> str:
+    # Normalize Z to +00:00 for fromisoformat
+    if dt_str.endswith("Z"):
+        dt_str = dt_str[:-1] + "+00:00"
+
+    dt = datetime.datetime.fromisoformat(dt_str)
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    else:
+        dt = dt.astimezone(datetime.timezone.utc)
+
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 # --- main processor ---
 def process_files_hocr2epubfxl(args):
     # separate HOCR + images
@@ -1077,14 +1092,108 @@ def process_files_hocr2epubfxl(args):
             "<?xml version='1.0' encoding='utf-8'?>\n"
             "<package version='2.0'\n"
             " xmlns='http://www.idpf.org/2007/opf'\n"
-            # TODO set book id
-            # " unique-identifier='BookId'\n"
             ">\n"
             "  <metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
-            # set metadata: title
-            f"    <dc:title>{escape(args.doc_title)}</dc:title>\n"
-            # "    <dc:language>en</dc:language>\n"
-            # f"    <dc:identifier id='BookId'>urn:uuid:{datetime.datetime.now(datetime.UTC).timestamp()}</dc:identifier>\n"
+        )
+
+        # set metadata
+        if args.doc_title:
+            content_opf += f'    <dc:title id="book-title">{escape(args.doc_title)}</dc:title>\n'
+            content_opf += '    <meta refines="#book-title" property="title-type">main</meta>\n'
+        if args.doc_subtitle:
+            content_opf += f'    <dc:title id="book-subtitle">{escape(args.doc_subtitle)}</dc:title>\n'
+            content_opf += '    <meta refines="#book-subtitle" property="title-type">subtitle</meta>\n'
+        if args.doc_subject:
+            content_opf += f"    <dc:subject>{escape(args.doc_subject)}</dc:subject>\n"
+        if args.doc_description:
+            content_opf += f"    <dc:description>{escape(args.doc_description)}</dc:description>\n"
+        creators = {
+            "": args.doc_creator,
+            "aut": args.doc_author,
+        }
+        for role, vals in creators.items():
+            if vals is None: continue
+            if role == "":
+                for creator in vals:
+                    content_opf += f"    <dc:creator>{escape(creator)}</dc:creator>\n"
+            else:
+                creator_idx = 0
+                for creator in vals:
+                    content_opf += f'    <dc:creator id="creator{creator_idx}">{escape(creator)}</dc:creator>\n'
+                    content_opf += f'    <meta refines="#creator{creator_idx}" property="role" scheme="marc:relators">{role}</meta>\n'
+                    creator_idx += 1
+        contributors = {
+            "ctb": args.doc_contributor,
+            "trl": args.doc_translator,
+            "edt": args.doc_editor,
+            "ill": args.doc_illustrator,
+            "pht": args.doc_photographer,
+            "aui": args.doc_introducer, # Preface author
+        }
+        contributor_idx = 0
+        for role, vals in contributors.items():
+            if vals is None: continue
+            for contributor in vals:
+                content_opf += f'    <dc:contributor id="contributor{contributor_idx}">{escape(contributor)}</dc:contributor>\n'
+                content_opf += f'    <meta refines="#contributor{contributor_idx}" property="role" scheme="marc:relators">{role}</meta>\n'
+                contributor_idx += 1
+        if args.doc_language:
+            content_opf += f"    <dc:language>{escape(args.doc_language)}</dc:language>\n"
+        if args.doc_isbn:
+            content_opf += f'    <dc:identifier id="bookid">urn:isbn:{escape(args.doc_isbn)}</dc:identifier>\n'
+        elif args.doc_identifier:
+            content_opf += f'    <dc:identifier id="bookid">{escape(args.doc_identifier)}</dc:identifier>\n'
+        if args.doc_asin:
+            content_opf += f'    <meta name="amazon:asin" content="{args.doc_asin.replace("\"", "&quot;")}"/>\n'
+        if args.doc_publisher:
+            content_opf += f'    <dc:publisher>{escape(args.doc_publisher)}</dc:publisher>\n'
+        if args.doc_modified:
+            doc_modified = to_utc_string(args.doc_modified)
+            content_opf += f'    <meta property="dcterms:modified">{escape(doc_modified)}</meta>\n'
+        if args.doc_date:
+            content_opf += f'    <dc:date>{escape(args.doc_date)}</dc:date>\n'
+        if args.doc_edition:
+            content_opf += f'    <meta property="dcterms:edition">{escape(args.doc_edition)}</meta>\n'
+        if args.doc_extent:
+            content_opf += f'    <meta property="dcterms:extent">{escape(args.doc_extent)}</meta>\n'
+        if args.doc_rights:
+            content_opf += f'    <dc:rights>{escape(args.doc_rights)}</dc:rights>\n'
+        if args.doc_cover_image:
+            cover_base = os.path.splitext(os.path.basename(args.doc_cover_image))[0]
+            if cover_base in page_basenames:
+                # cover image was already added
+                # manifest_items.append(f"<item id='img{i+1}'
+                cover_base_idx = page_basenames.index(cover_base)
+                cover_item_id = f"img{cover_base_idx+1}"
+                # print(f"using existing cover image {cover_item_id}")
+            else:
+                # add cover image
+                # NOTE we dont scale the cover image
+                # TODO avoid item ID collisions
+                cover_item_id = "cover-image"
+                cover_basename = os.path.basename(args.doc_cover_image)
+                cover_format = os.path.splitext(cover_basename)[1].lstrip(".").lower()
+                if cover_format == "jpg":
+                    cover_format = "jpeg"
+                # TODO avoid file path collisions
+                img_path = f"OEBPS/images/{cover_basename}"
+                with open(args.doc_cover_image, "rb") as f:
+                    zf.writestr(img_path, f.read(), compress_type=zipfile.ZIP_STORED)
+                manifest_items.append(f"<item id='{cover_item_id}' href='images/{cover_basename}' media-type='image/{cover_format}'/>")
+                # print(f"adding cover image {cover_item_id}")
+            content_opf += f'    <meta name="cover" content="{cover_item_id}"/>\n'
+        # extra metadata
+        for tag in (args.doc_dc or []):
+            key, val = tag.split("=", 1)
+            content_opf += f'    <dc:{key}>{escape(val)}</dc:{key}>\n'
+        for tag in (args.doc_property or []):
+            key, val = tag.split("=", 1)
+            content_opf += f'    <meta property="{key}">{escape(val)}"</meta>\n'
+        for tag in (args.doc_meta or []):
+            key, val = tag.split("=", 1)
+            content_opf += f'    <meta name="{key}" content="{val.replace("\"", "&quot;")}"/>\n'
+
+        content_opf += (
             "    <dc:creator>hocr-to-epub-fxl</dc:creator>\n"
             # "    <meta name='cover' content='img1'/>\n"
             "  </metadata>\n"
@@ -1548,6 +1657,171 @@ if __name__ == '__main__':
         default="",
         type=str,
     )
+
+    parser.add_argument(
+        '--doc-subtitle', # args.doc_subtitle
+        help=f'document subtitle',
+        default="",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-subject', # args.doc_subject
+        help=f'document subject (keywords)',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-description', # args.doc_description
+        help=f'document description',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-author', # args.doc_author
+        help=f'document author',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-translator', # args.doc_translator
+        help=f'document translator',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-editor', # args.doc_editor
+        help=f'document editor',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-illustrator', # args.doc_illustrator
+        help=f'document illustrator',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-photographer', # args.doc_photographer
+        help=f'document photographer',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-introducer', # args.doc_introducer
+        help=f'document introducer (author of introduction / preface / foreword / afterword)',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-contributor', # args.doc_contributor
+        help=f'document contributor',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-creator', # args.doc_creator
+        help=f'document creator',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-language', # args.doc_language
+        help=f'document language. example: "en"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-isbn', # args.doc_isbn
+        help=f'document ISBN number. prefer ISBN-13',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-asin', # args.doc_asin
+        help=f'document ASIN number',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-identifier', # args.doc_identifier
+        help=f'document identifier',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-publisher', # args.doc_publisher
+        help=f'document publisher',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-modified', # args.doc_modified
+        help=f'document modified date. example: "2026-02-02"',
+        type=str,
+        # epubcheck requires dcterms:modified
+        required=True,
+    )
+
+    parser.add_argument(
+        '--doc-date', # args.doc_date
+        help=f'document date',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-edition', # args.doc_edition
+        help=f'document edition. example: "1"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-extent', # args.doc_extent
+        help=f'document extent. example: "123 pages"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-rights', # args.doc_rights
+        help=f'document rights. example: "© 2026 Some Author"',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-cover-image', # args.doc_cover_image
+        help=f'document cover image',
+        type=str,
+    )
+
+    parser.add_argument(
+        '--doc-dc', # args.doc_dc
+        help=f'document extra Dublin Core tag. example: "identifier=Some ID"',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-property', # args.doc_property
+        help=f'document extra property tag. example: "belongs-to-collection=Some Series"',
+        type=str,
+        action='append', # multiple values
+    )
+
+    parser.add_argument(
+        '--doc-meta', # args.doc_meta
+        help=f'document extra meta tag. example: "amazon:asin=B08XYZ1234"',
+        type=str,
+        action='append', # multiple values
+    )
+
     parser.add_argument(
         '--canonical-url-base', # args.canonical_url_base
         help=f'canonical URL of the root directory path',
@@ -1597,5 +1871,12 @@ if __name__ == '__main__':
         args.text_html_relative_word_positions_static_font_width = not args.text_html_relative_word_positions_dynamic_font_width
 
     args.text_html_bundle_font = False
+
+    if args.doc_isbn:
+        pass
+    elif args.doc_identifier:
+        pass
+    else:
+        raise ValueError("document identifier is required. hint: set doc-isbn or doc-identifier")
 
     process_files_hocr2epubfxl(args)
