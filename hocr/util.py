@@ -1,6 +1,7 @@
 import gzip
 import io
 from xml.etree import ElementTree
+from html import escape as html_escape
 
 #: Contains the HOCR schema
 HOCR_SCHEMA = '{http://www.w3.org/1999/xhtml}'
@@ -41,7 +42,7 @@ def elem_inner_text(elem):
 def elem_inner_html(elem):
     buf = io.StringIO()
     if elem.text:
-        buf.write(elem.text)
+        buf.write(html_escape(elem.text, quote=False))
     # XML -> HTML
     # see also: hocr.util.register_and_nuke_xhtml_namespace
     elem_remove_xmlns(elem)
