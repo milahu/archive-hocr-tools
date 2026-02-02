@@ -1058,7 +1058,8 @@ def process_files_hocr2epubfxl(args):
         page_filename_list = []
         for i, base in enumerate(page_basenames):
             page_filename_list.append(f"{base}.{args.text_format}")
-            manifest_items.append(f"<item id='page{i+1}' href='{base}.{args.text_format}' media-type='{text_media_type}'/>")
+            # properties='scripted': the item file contains <script>
+            manifest_items.append(f"<item id='page{i+1}' href='{base}.{args.text_format}' media-type='{text_media_type}' properties='scripted'/>")
             spine_items.append(f"<itemref idref='page{i+1}'/>")
             manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{args.image_format}' media-type='image/{args.image_format}'/>")
         if args.append_pages:
