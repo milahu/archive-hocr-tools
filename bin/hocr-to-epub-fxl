@@ -1090,8 +1090,11 @@ def process_files_hocr2epubfxl(args):
 
         content_opf = (
             "<?xml version='1.0' encoding='utf-8'?>\n"
-            "<package version='2.0'\n"
+            # EPUB3
+            "<package version='3.0'\n"
             " xmlns='http://www.idpf.org/2007/opf'\n"
+            # <dc:identifier id="bookid">
+            " unique-identifier='bookid'\n"
             ">\n"
             "  <metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
         )
@@ -1198,36 +1201,43 @@ def process_files_hocr2epubfxl(args):
             # "    <meta name='cover' content='img1'/>\n"
             "  </metadata>\n"
             "  <manifest>\n"
-            "    <item id='ncx' href='toc.ncx' media-type='application/x-dtbncx+xml'/>\n"
+            '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n'
             f"    {'\n    '.join(manifest_items)}\n"
             "  </manifest>\n"
-            "  <spine toc='ncx'>\n"
+            "  <spine>\n"
             f"    {'\n    '.join(spine_items)}\n"
             "  </spine>\n"
             "</package>\n"
         )
         zf.writestr("OEBPS/content.opf", content_opf)
 
-        # --- toc.ncx ---
-        toc_ncx = [
-            "<?xml version='1.0' encoding='UTF-8'?>\n"
-            "<ncx xmlns='http://www.daisy.org/z3986/2005/ncx/' version='2005-1'>\n"
-            "  <head>\n"
-            # TODO set book id
-            # "   <meta name='dtb:uid' content='BookId'/>\n"
-            "  </head>\n"
-            # set metadata: title
-            f"  <docTitle><text>{escape(args.doc_title)}</text></docTitle>\n"
-            "  <navMap>\n"
-        ]
+        html_buf = io.StringIO()
+        html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        html_buf.write('<!DOCTYPE html>\n')
+        html_buf.write('<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n')
+        html_buf.write('<head>\n')
+        html_buf.write('  <title>Table of Contents</title>\n')
+        html_buf.write('</head>\n')
+        html_buf.write('<body>\n')
+        html_buf.write('  <nav epub:type="toc" id="toc">\n')
+        html_buf.write('    <h1>Contents</h1>\n')
+        html_buf.write('    <ol>\n')
+        # TODO let users specify a table of contents
+        # with headings and page numbers
         for i, base in enumerate(page_basenames):
-            toc_ncx.append(
-                f'    <navPoint id="navPoint-{i+1}" playOrder="{i+1}">'
-                f'<navLabel><text>Page {i+1}</text></navLabel>'
-                f'<content src="{base}.{args.text_format}"/></navPoint>'
-            )
-        toc_ncx.append("  </navMap>\n</ncx>")
-        zf.writestr("OEBPS/toc.ncx", "\n".join(toc_ncx))
+            html_buf.write(f'      <li><a href="{base}.{args.text_format}">Page {i+1}</a></li>\n')
+        html_buf.write('    </ol>\n')
+        html_buf.write('  </nav>\n')
+        html_buf.write('  <nav epub:type="page-list" id="page-list">\n')
+        # html_buf.write('    <h2>Pages</h2>\n')
+        html_buf.write('    <ol>\n')
+        for i, base in enumerate(page_basenames):
+            html_buf.write(f'      <li><a href="{base}.{args.text_format}">{i+1}</a></li>\n')
+        html_buf.write('    </ol>\n')
+        html_buf.write('  </nav>\n')
+        html_buf.write('</body>\n')
+        html_buf.write('</html>\n')
+        zf.writestr("OEBPS/nav.xhtml", html_buf.getvalue())
 
         # --- process pages in parallel and stream directly to ZIP ---
         def process_page_result(page_result):
