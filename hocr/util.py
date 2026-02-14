@@ -1,36 +1,42 @@
 import gzip
 import io
-from xml.etree import ElementTree
+from lxml import etree
 from html import escape as html_escape
 
 #: Contains the HOCR schema
 HOCR_SCHEMA = '{http://www.w3.org/1999/xhtml}'
 
-def register_and_nuke_xhtml_namespace():
-    # Nuke the namespace, otherwise it will prefix everything with html:
-    ElementTree.register_namespace('', 'http://www.w3.org/1999/xhtml')
-
-
-def iterparse_tags(fp, tag=None, events=None):
-    doc = ElementTree.iterparse(fp, events=events)
+def iterparse_tags(fp, tag=None, events=("end",)):
+    # fp = io.BytesIO() # test: empty input
+    # events is None -> TypeError: 'lxml.etree.HTMLParser' object is not iterable
+    assert not events is None
+    # use lxml.etree to parse XHTML with HTML entities like "&rarr;"
+    doc = etree.iterparse(fp, events=events, tag=tag, html=True)
     try:
-        for act, elem in doc:
-            if tag is not None and elem.tag not in tag:
-                continue
-
-            yield act, elem
-    except ElementTree.ParseError as exc:
-        if exc.code == 3:
-            # empty input -> no tags
-            # exc.msg == "no element found: line 1, column 0"
+        if tag is None:
+            for act, elem in doc:
+                yield act, elem
+        else:
+            for act, elem in doc:
+                if elem.tag not in tag:
+                    continue
+                yield act, elem
+    except etree.XMLSyntaxError as exc:
+        if exc.code == 1:
+            # lxml.etree.XMLSyntaxError: no element found
             return
         raise
 
 def elem_tostring(elem, xml_declaration=None, short_empty_elements=False):
-    s = ElementTree.tostring(elem, method='xml',
-                             encoding='UTF-8',
-                             short_empty_elements=short_empty_elements,
-                             xml_declaration=xml_declaration)
+    s = etree.tostring(
+        elem,
+        method="xml",
+        encoding="UTF-8",
+        xml_declaration=xml_declaration,
+        with_tail=False,
+        pretty_print=False,
+        short_empty_elements=short_empty_elements,
+    )
     return s
 
 def elem_inner_text(elem):
@@ -43,23 +49,26 @@ def elem_inner_html(elem):
     buf = io.StringIO()
     if elem.text:
         buf.write(html_escape(elem.text, quote=False))
-    # XML -> HTML
-    # see also: hocr.util.register_and_nuke_xhtml_namespace
-    elem_remove_xmlns(elem)
     for child in elem:
-        buf.write(ElementTree.tostring(
-            child,
-            # encoding="UTF-8", # bytes
-            encoding="unicode", # str
-        ))
+        # Work on a copy so we don't mutate original tree
+        child_copy = etree.fromstring(etree.tostring(child))
+        elem_remove_xmlns(child_copy)
+        buf.write(
+            etree.tostring(
+                child_copy,
+                encoding="unicode",
+                with_tail=False
+            )
+        )
     return buf.getvalue()
 
 def elem_remove_xmlns(elem):
     # a: aa<sup xmlns:html="http://www.w3.org/1999/xhtml">bb</sup>cc
     # b: aa<sup>bb</sup>cc
-    elem.tag = elem.tag.split("}", 1)[-1]
-    for e in elem:
-        elem_remove_xmlns(e)
+    if isinstance(elem.tag, str):
+        elem.tag = etree.QName(elem).localname
+    for child in elem:
+        elem_remove_xmlns(child)
 
 def open_if_required(fd_or_path):
     """
@@ -117,35 +126,36 @@ def get_header_footer(fd):
 
     * Tuple (header, footer)
     """
-    s = ''
-    tags = (HOCR_SCHEMA + 'html', HOCR_SCHEMA + 'head')
-    doc = iterparse_tags(fd, tag=tags, events=('start', 'end'))
-    html_elem = None
-    head_elem = None
+    parser = etree.XMLParser(
+        resolve_entities=True,
+        recover=True,
+        remove_blank_text=False,
+    )
 
-    for act, elem in doc:
-        if elem.tag[-4:] == 'html' and act == 'start':
-            html_elem = elem
-            children = list(html_elem)
-            for child in children:
-                if child.tag[-4:] == 'body':
-                    chs = list(child)
-                    for c in chs:
-                        child.remove(c)
-                    # Remove body, we add an empty one
-                    html_elem.remove(child)
+    tree = etree.parse(fd, parser)
+    root = tree.getroot()
 
-        if elem.tag[-4:] == 'head' and act == 'end':
-            head_elem = elem
-            body_elem = ElementTree.Element('body')
+    # Find body
+    body = root.find(f".//{XHTML_NS}body")
+    if body is None:
+        raise ValueError("No <body> element found")
 
-            html_elem.append(body_elem)
+    # Remove all body children
+    for child in list(body):
+        body.remove(child)
 
-            s = elem_tostring(html_elem, xml_declaration=True,
-                              short_empty_elements=True)
-            s = s.decode('utf-8')
-            break
+    # Serialize full document
+    doc_bytes = etree.tostring(
+        tree,
+        encoding="UTF-8",
+        xml_declaration=True,
+        pretty_print=False,
+        short_empty_elements=True,
+    )
 
+    s = doc_bytes.decode("utf-8")
+
+    # Split at empty body
     comp = s.split('<body />')
 
     # XML-ho
