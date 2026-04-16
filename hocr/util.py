@@ -51,7 +51,12 @@ def elem_inner_html(elem):
         buf.write(html_escape(elem.text, quote=False))
     for child in elem:
         # Work on a copy so we don't mutate original tree
-        child_copy = etree.fromstring(etree.tostring(child))
+        child_bytes = etree.tostring(child, with_tail=False)
+        try:
+            child_copy = etree.fromstring(child_bytes)
+        except etree.XMLSyntaxError as exc:
+            # this should never happen...
+            raise ValueError(f"failed to parse XML: {child_bytes!r}")
         elem_remove_xmlns(child_copy)
         buf.write(
             etree.tostring(
@@ -60,6 +65,8 @@ def elem_inner_html(elem):
                 with_tail=False
             )
         )
+        if child.tail:
+            buf.write(html_escape(child.tail, quote=False))
     return buf.getvalue()
 
 def elem_remove_xmlns(elem):
