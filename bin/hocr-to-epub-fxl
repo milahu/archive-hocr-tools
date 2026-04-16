@@ -1212,24 +1212,61 @@ def process_files_hocr2epubfxl(args):
         html_buf.write('<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n')
         html_buf.write('<head>\n')
         html_buf.write('  <title>Table of Contents</title>\n')
+        html_buf.write('  <style>\n')
+        html_buf.write('    body {\n')
+        html_buf.write('      background: grey;\n')
+        html_buf.write('    }\n')
+        html_buf.write('    main {\n')
+        html_buf.write('      background: white;\n')
+        # TODO make this depend on
+        # the input resolution (600dpi?)
+        # args.scale
+        # the actual page width
+        html_buf.write('      font-size: 230%;\n')
+        html_buf.write('      width: 38em;\n')
+        html_buf.write('      padding: 4em;\n')
+        html_buf.write('      margin: auto;\n') # center
+        html_buf.write('    }\n')
+        html_buf.write('    a {\n')
+        html_buf.write('      text-decoration: none;\n')
+        html_buf.write('      color: black;\n')
+        html_buf.write('    }\n')
+        html_buf.write('    span.pagenum {\n')
+        html_buf.write('      margin-left: 1em;\n')
+        html_buf.write('    }\n')
+        html_buf.write('  </style>\n')
+        html_buf.write('  <script>\n')
+        html_buf.write('    // <![CDATA[\n')
+        html_buf.write('    // observe navigation in iframe\n')
+        html_buf.write('    document.addEventListener("click", function(event) {\n')
+        html_buf.write('      const link = event.target.closest("a");\n')
+        html_buf.write('      if (!link) return;\n')
+        html_buf.write('      if (!link.href) return;\n')
+        html_buf.write('      // Send message to parent frame before navigation\n')
+        html_buf.write('      window.parent.postMessage({\n')
+        html_buf.write('        type: "iframe-link-click",\n')
+        html_buf.write('        href: link.href\n')
+        html_buf.write('      }, "*");\n')
+        html_buf.write('    });\n')
+        html_buf.write('    // ]]>\n')
+        html_buf.write('  </script>\n')
         html_buf.write('</head>\n')
         html_buf.write('<body>\n')
+        html_buf.write('<main>\n')
         html_buf.write('  <nav epub:type="toc" id="toc">\n')
-        html_buf.write('    <h1>Contents</h1>\n')
-        html_buf.write('    <ol>\n')
-        # TODO let users specify a table of contents
-        # with headings and page numbers
-        for i, base in enumerate(page_basenames):
-            html_buf.write(f'      <li><a href="{base}.{args.text_format}">Page {i+1}</a></li>\n')
-        html_buf.write('    </ol>\n')
+        # html_buf.write('    <h1>Contents</h1>\n')
+        nav_xhtml_write_toc_list(html_buf, args, page_basenames)
         html_buf.write('  </nav>\n')
-        html_buf.write('  <nav epub:type="page-list" id="page-list">\n')
-        # html_buf.write('    <h2>Pages</h2>\n')
-        html_buf.write('    <ol>\n')
-        for i, base in enumerate(page_basenames):
-            html_buf.write(f'      <li><a href="{base}.{args.text_format}">{i+1}</a></li>\n')
-        html_buf.write('    </ol>\n')
-        html_buf.write('  </nav>\n')
+        # dont create pages list if we have a table of contents
+        if args.doc_contents_file is None:
+            html_buf.write('  <nav epub:type="page-list" id="page-list">\n')
+            # html_buf.write('    <h2>Pages</h2>\n')
+            html_buf.write('    <ol>\n')
+            for i, base in enumerate(page_basenames):
+                html_buf.write(f'      <li><a href="{base}.{args.text_format}">{i+1}</a></li>\n')
+            html_buf.write('    </ol>\n')
+            html_buf.write('  </nav>\n')
+        html_buf.write('</main>\n')
         html_buf.write('</body>\n')
         html_buf.write('</html>\n')
         zf.writestr("OEBPS/nav.xhtml", html_buf.getvalue())
@@ -1494,12 +1531,149 @@ def process_files_hocr2epubfxl(args):
             b = b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>'
             reader_html_data = reader_html_data.replace(a, b)
 
+        if args.doc_contents_file is None:
+            # remove TOC from menu
+            a = b'  <a href="OEBPS/nav.xhtml" target="page1">Contents</a>\n'
+            b = b''
+            reader_html_data = reader_html_data.replace(a, b)
+
         zf.writestr("index.xhtml", reader_html_data, compress_type=zipfile.ZIP_DEFLATED)
 
         # add empty .nojekyll file for github-pages
         zf.writestr(".nojekyll", "", compress_type=zipfile.ZIP_STORED)
 
     # print(f"[+] EPUB written: {args.output}")
+
+
+def nav_xhtml_write_toc_list(html_buf, args, page_basenames):
+    if args.doc_contents_file is None:
+        html_buf.write('    <ol>\n')
+        for i, base in enumerate(page_basenames):
+            html_buf.write(f'      <li><a href="{base}.{args.text_format}">Page {i+1}</a></li>\n')
+        html_buf.write('    </ol>\n')
+        return
+    contents_file_ext = os.path.splitext(args.doc_contents_file)[1].lower()
+    if contents_file_ext == ".md":
+        return nav_xhtml_write_toc_list_md(html_buf, args, page_basenames)
+    raise NotImplementedError(f"bad contents_file_ext {contents_file_ext!r}")
+
+
+def nav_xhtml_write_toc_list_md(html_buf, args, page_basenames):
+    with open(args.doc_contents_file, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    def detect_indent_step(lines):
+        for line in lines:
+            m = re.match(r'^( +)- ', line)
+            if m:
+                return len(m.group(1))
+        return 1
+
+    indent_step = detect_indent_step(lines)
+
+    level_stack = []
+    previous_level = 0
+    first_item = True
+
+    xhtml_depth = 2  # base indent inside <nav>
+
+    def write(line):
+        html_buf.write("  " * xhtml_depth + line + "\n")
+
+    page_href_of_page_num = [None]
+    for base in page_basenames:
+        page_href_of_page_num.append(f"{base}.{args.text_format}")
+
+    page_num = 0
+    page_href = None
+    chapter_title = None
+
+    for line in lines:
+
+        if not page_num is None:
+            last_page_num = page_num
+        last_chapter_title = chapter_title
+
+        # parse TOC line
+        match = re.match(r'^( *)-\s+(.*?)(?:\s+(\d+))?\s*$', line)
+        if not match:
+            continue
+
+        spaces, chapter_title, page_num = match.groups()
+
+        if page_num is None:
+            page_href = None
+            # unescape number at end of chapter title
+            # a: Some Chapter \123
+            # b: Some Chapter 123
+            match = re.match(r'^(.*\s+)\\(\d+)$', chapter_title)
+            if match:
+                chapter_title = match.group(1) + match.group(2)
+            chapter_link = f'<span class="nopagenum">{chapter_title}</span>'
+        else:
+            page_num = int(page_num)
+            if page_num < last_page_num:
+                raise ValueError(
+                    f"content items must be in reading order. "
+                    f"item {repr(f'{chapter_title} #{page_num}')} is before the previous "
+                    f"item {repr(f'{last_chapter_title} #{last_page_num}')}"
+                )
+            page_href = page_href_of_page_num[page_num]
+            chapter_link = f'<a href="{page_href}">{chapter_title} <span class="pagenum">{page_num}</span></a>'
+
+        level = len(spaces) // indent_step
+        chapter_title = escape(chapter_title)
+
+        if first_item:
+
+            write("<ol>")
+            level_stack.append(level)
+            xhtml_depth += 1
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+            first_item = False
+            previous_level = level
+            continue
+
+        if level > previous_level:
+            write("<ol>")
+            level_stack.append(level)
+            xhtml_depth += 1
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+
+        elif level < previous_level:
+            while level_stack and level_stack[-1] > level:
+                xhtml_depth -= 1
+                write("</li>")
+                xhtml_depth -= 1
+                write("</ol>")
+                level_stack.pop()
+            xhtml_depth -= 1
+            write("</li>")
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+
+        else:
+            xhtml_depth -= 1
+            write("</li>")
+            write("<li>")
+            xhtml_depth += 1
+            write(chapter_link)
+
+        previous_level = level
+
+    while level_stack:
+        xhtml_depth -= 1
+        write("</li>")
+        xhtml_depth -= 1
+        write("</ol>")
+        level_stack.pop()
+
+    return html_buf.getvalue()
 
 
 if __name__ == '__main__':
@@ -1656,6 +1830,18 @@ if __name__ == '__main__':
         ),
         action='store_true',
     )
+
+    parser.add_argument(
+        '--doc-contents-file', # args.doc_contents_file
+        help=(
+            'document contents file. '
+            'example contents.md line: '
+            '"- Some Chapter 123" = link to "Some Chapter" on page 123. '
+            '"- Some Chapter \\123" = "Some Chapter 123" without link to page'
+        ),
+        type=str,
+    )
+
     parser.add_argument(
         '--doc-title', # args.doc_title
         help=f'document title',

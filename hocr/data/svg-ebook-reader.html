@@ -96,6 +96,7 @@
 <body>
 
 <div id="menu-bar">
+  <a href="OEBPS/nav.xhtml" target="page1">Contents</a>
   <button id="prevPage">Previous</button>
   <button id="nextPage">Next</button>
   <input type="number" id="pageNumber" min="1" value="1"/>
@@ -106,7 +107,7 @@
 </div>
 
 <div id="viewer" class="single-page">
-  <iframe id="page1" enable-annotation=""></iframe>
+  <iframe id="page1" name="page1" enable-annotation=""></iframe>
 </div>
 
 <script>
@@ -130,6 +131,7 @@
   function createIframe(id) {
     const iframe = document.createElement('iframe');
     iframe.id = id;
+    iframe.setAttribute("name", id);
     // enable hypothesis annotations in iframe
     // https://h.readthedocs.io/projects/client/en/latest/publishers/embedding.html
     iframe.setAttribute("enable-annotation", "");
@@ -286,6 +288,21 @@
     const pageFromHash = getPageFromHash();
     if (pageFromHash && pageFromHash !== currentPage) {
       goToPage(pageFromHash, true);
+    }
+  });
+
+  // handle clicks from nav.xhtml
+  window.addEventListener("message", (event) => {
+    if (event.data.type === "iframe-link-click") {
+      const match = /\/OEBPS\/(\d+).xhtml$/.exec(event.data.href);
+      if (match) {
+        const pageNum = Number(match[1]);
+        // load page again to update menu
+        goToPage(pageNum);
+      }
+      else {
+        console.error("error: iframe navigated to unrecognized URL:", event.data.href);
+      }
     }
   });
 
