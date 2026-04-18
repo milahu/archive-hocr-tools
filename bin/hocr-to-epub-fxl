@@ -1618,7 +1618,10 @@ def nav_xhtml_write_toc_list_md(html_buf, args, page_basenames):
                     f"item {repr(f'{chapter_title} #{page_num}')} is before the previous "
                     f"item {repr(f'{last_chapter_title} #{last_page_num}')}"
                 )
-            page_href = page_href_of_page_num[page_num]
+            try:
+                page_href = page_href_of_page_num[page_num]
+            except IndexError as exc:
+                raise ValueError(f"TOC item has no page. page_num={page_num} chapter_title={chapter_title!r}")
             chapter_link = f'<a href="{page_href}">{chapter_title} <span class="pagenum">{page_num}</span></a>'
 
         level = len(spaces) // indent_step
