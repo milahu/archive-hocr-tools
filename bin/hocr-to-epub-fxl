@@ -1206,6 +1206,11 @@ def process_files_hocr2epubfxl(args):
         )
         zf.writestr("OEBPS/content.opf", content_opf)
 
+        # TODO this assumes 600dpi input images
+        font_size_px = 16 * 4.6 * args.scale
+        main_width_px = 2800 * args.scale
+        main_padding_px = 300 * args.scale
+
         html_buf = io.StringIO()
         html_buf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         html_buf.write('<!DOCTYPE html>\n')
@@ -1218,13 +1223,9 @@ def process_files_hocr2epubfxl(args):
         html_buf.write('    }\n')
         html_buf.write('    main {\n')
         html_buf.write('      background: white;\n')
-        # TODO make this depend on
-        # the input resolution (600dpi?)
-        # args.scale
-        # the actual page width
-        html_buf.write('      font-size: 230%;\n')
-        html_buf.write('      width: 38em;\n')
-        html_buf.write('      padding: 4em;\n')
+        html_buf.write(f'      font-size: {font_size_px}px;\n')
+        html_buf.write(f'      width: {main_width_px}px;\n')
+        html_buf.write(f'      padding: {main_padding_px}px;\n')
         html_buf.write('      margin: auto;\n') # center
         html_buf.write('    }\n')
         html_buf.write('    a {\n')
