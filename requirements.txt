@@ -2,3 +2,5 @@ pillow
 python-fontconfig
 tqdm
 psutil
+numpy
+doxapy

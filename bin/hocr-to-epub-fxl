@@ -28,15 +28,24 @@
 # TODO fit width by default
 # with mobile browsers, we cannot zoom out of the page iframe
 # FIXME mobile browsers have no "zoom out" = minimum zoom level is 100%
+# TODO implement zoom in javascript and CSS `transform: scale(...)`
 
 # TODO add lang attribute: <html lang="xxx">
 
 # TODO add scripts: git2epub.py epub2git.py update.py
 
+# TODO add scripts: serve_http.py
+# because hypothesis annotations dont work over the file protocol
+
 # TODO add option to handle end-of-line-hyphens
 # <span>hy</span><span>phen</span>
 
 # TODO add inverse operation: convert epub to hocr files
+
+# FIXME CPU load jumps between 100% and 600%
+# probably 600% for im.save(format="AVIF")
+# and 100% for what?
+# the 100% phases take around 5 seconds per page
 
 import os
 import re
@@ -55,6 +64,7 @@ from xml.sax.saxutils import escape
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import importlib.resources
 import urllib.parse
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -65,8 +75,34 @@ from hocr.text import hocr_word_data_bbox
 
 import PIL.features
 from PIL import Image
+from PIL import ImageFilter
 from tqdm import tqdm
 import psutil
+import numpy as np
+import doxapy
+
+
+from tqdm import tqdm as original_tqdm
+
+class tqdm(original_tqdm):
+    """
+    use CPU time instead of wall-clock time
+    https://github.com/tqdm/tqdm/issues/1748
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Override the time function to CPU time
+        self._time = time.process_time
+        
+        # Reset start time to CPU clock
+        self.start_t = self._time()
+        self.last_print_t = self.start_t
+
+    def reset(self, total=None):
+        super().reset(total=total)
+        self.start_t = self._time()
+        self.last_print_t = self.start_t
 
 
 hocrfile_extensions = ("hocr", "html", "xhtml")
@@ -84,13 +120,34 @@ for (( q=10; q<=30; q++ )); do
         "$dst";
 done
 '''
-DEFAULT_IMAGE_FORMAT = "avif"
-DEFAULT_QUALITY = 20
+DEFAULT_BINARY_IMAGE_FORMAT = "avif"
+DEFAULT_GRAYSCALE_IMAGE_FORMAT = "avif"
+DEFAULT_COLOR_IMAGE_FORMAT = "avif"
 
-if not PIL.features.check(DEFAULT_IMAGE_FORMAT):
-    DEFAULT_IMAGE_FORMAT = "webp"
-    DEFAULT_QUALITY = 1
-assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_format {DEFAULT_IMAGE_FORMAT!r}"
+# TODO do your own benchmarking and tuning
+# note: smaller image file size can have worse visual quality
+
+DEFAULT_BINARY_IMAGE_QUALITY = 20
+DEFAULT_GRAYSCALE_IMAGE_QUALITY = 40
+DEFAULT_COLOR_IMAGE_QUALITY = 40
+
+DEFAULT_BINARY_IMAGE_SAVE_SPEED = 6
+DEFAULT_GRAYSCALE_IMAGE_SAVE_SPEED = 6
+DEFAULT_COLOR_IMAGE_SAVE_SPEED = 6
+
+DEFAULT_BINARY_IMAGE_ALGO = "sauvola"
+
+# low values produce blurry characters
+# high values produce sharp characters
+# this is visible in very small characters
+# for example a "registered trademark symbol" in superscript
+DEFAULT_BINARY_IMAGE_THRESHOLD_SENSITIVITY = 0.8
+
+# no. throw later
+# if not PIL.features.check(DEFAULT_IMAGE_FORMAT):
+#     DEFAULT_IMAGE_FORMAT = "webp"
+#     raise "TODO benchmark and tune webp compression"
+# assert PIL.features.check(DEFAULT_IMAGE_FORMAT), f"PIL does not support image_format {DEFAULT_IMAGE_FORMAT!r}"
 
 WEBP_METHOD = 6
 
@@ -131,13 +188,33 @@ media_type_by_text_format = {
     "svg": "image/svg+xml",
 }
 
+resample_map = {
+    "nearest": Image.NEAREST,
+    "bilinear": Image.BILINEAR,
+    "lanczos": Image.LANCZOS, # artifacts
+}
+
+binarize_algo_map = {
+    "otsu": doxapy.Binarization.Algorithms.OTSU,
+    "niblack": doxapy.Binarization.Algorithms.NIBLACK,
+    "sauvola": doxapy.Binarization.Algorithms.SAUVOLA,
+    "wolf": doxapy.Binarization.Algorithms.WOLF,
+}
+
 default_max_workers = psutil.cpu_count(logical=False) or 1
 max_max_workers = psutil.cpu_count() or 1 # number of CPU threads
 
 # --- top-level page processor ---
 def process_page(hocrfile, args):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
-    assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
+    # assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
+
+    # create a local function for this process
+    # fix: pickle cannot serialize this function
+    def filter_binary_page(page_num):
+        return (not args.filter_grayscale_page(page_num)) and (not args.filter_color_page(page_num))
+    args.filter_binary_page = filter_binary_page
+
     # --- parse HOCR ---
     page = None
     page_w, page_h = None, None
@@ -156,10 +233,60 @@ def process_page(hocrfile, args):
 
     page_base = get_page_base(hocrfile)
 
-    cached_page_image_path = f"{page_image_path}.q{args.quality}.s{args.scale}.{args.image_format}"
+    page_num = int(page_base)
+
+    if args.filter_grayscale_page(page_num) and args.filter_color_page(page_num):
+        raise ValueError(f"both grayscale-page and color-page match page number {page_num}")
+
+    if args.filter_grayscale_page(page_num):
+        image_format = args.grayscale_image_format
+        image_save_speed = args.grayscale_image_save_speed
+        quality = args.grayscale_image_quality
+        depth = 8
+        image_mode = "L"
+    elif args.filter_color_page(page_num):
+        image_format = args.color_image_format
+        image_save_speed = args.color_image_save_speed
+        quality = args.color_image_quality
+        depth = 24
+        image_mode = "RGB"
+    else: # binary page
+        # in HTML, we cannot use TIFF images with CCITT-G4 compression
+        # because most web browsers dont support it
+        # (but they do support PDF with CCITT-G4 images...)
+        # so the next-best option is AVIF
+        # https://github.com/Fyrd/caniuse/issues/4281
+        # https://github.com/milahu/group4-polyfill
+        # image_format = "avif"
+        image_format = args.binary_image_format
+        image_save_speed = args.binary_image_save_speed
+        quality = args.binary_image_quality
+        depth = 1
+        image_mode = "1"
+
+    if image_format == "png":
+        quality = 0
+
+    # TODO maybe add more parameters to the image path for cache validity
+    # the image path should reflect all config values
+    path_parts = [
+        page_image_path,
+        f"q{quality}",
+        f"d{depth}",
+        f"s{args.scale}",
+        f"sp{image_save_speed}",
+        f"sen{args.binary_image_threshold_sensitivity}",
+        f"win{args.binary_image_window_size}",
+    ]
+    # if args.crop_pages:
+    #     path_parts += [f"crop{args.crop_pages}"]
+    path_parts += [image_format]
+    cached_page_image_path = ".".join(path_parts)
 
     # --- check image cache ---
     getmtime = os.path.getmtime
+    if args.ignore_cached_images and os.path.exists(cached_page_image_path):
+        os.unlink(cached_page_image_path)
     if os.path.exists(cached_page_image_path) and getmtime(cached_page_image_path) > getmtime(page_image_path):
         # read cache
         with open(cached_page_image_path, "rb") as f:
@@ -172,37 +299,119 @@ def process_page(hocrfile, args):
         # write cache
         # compress page image
         im = Image.open(page_image_path)
+        # if args.crop_pages:
+        #     m = re.match(r"^(\d+)x(\d+)\+(\d+)\+(\d+)$", args.crop_pages)
+        #     width, height, left, upper = map(int, m.groups())
+        #     right = left + width # x2
+        #     lower = upper + height # y2
+        #     im = im.crop((left, upper, right, lower)) # x1, y1, x2, y2
         page_w, page_h = im.size
-        if im.mode not in ("RGB", "L"):
-            im = im.convert("RGB")
+        if not args.filter_color_page(page_num):
+            # grayscale or binarized
+            if im.mode not in ("1", "L"):
+                im = im.convert("L")
+                assert im.mode == "L", f"im.mode={im.mode}"
         if args.scale != 1:
             page_w = round(page_w * args.scale)
             page_h = round(page_h * args.scale)
-            im = im.resize((page_w, page_h), resample=Image.LANCZOS)
+            resample = resample_map.get(args.scale_resample)
+            im = im.resize((page_w, page_h), resample=resample)
+
+        if args.filter_binary_page(page_num):
+            # binarize
+            if 0:
+                # no, this is too lossy
+                # this can wrongly join close areas as in "Ü"
+                # denoise
+                # assume: scale=1 -> 600 dpi, scale=0.5 -> 300 dpi
+                # at 300 dpi: text stroke: 2–4 px wide, noise speckles: 1 px
+                denoise_size = 5 if args.scale == 1 else 3
+                im = im.filter(ImageFilter.MedianFilter(size=denoise_size))
+            if 0:
+                # blur before binarize
+                input_dpi = 600 # TODO dont assume this
+                output_dpi = args.scale * input_dpi
+                blur_sigma = 0.3 * (output_dpi / 300)
+                blur_sigma = max(0.2, min(0.6, blur_sigma)) # clamp
+                im = im.filter(ImageFilter.GaussianBlur(blur_sigma))
+            # binarize
+            # based on https://github.com/milahu/binarize-pdf
+
+            # dt is around 0.01 seconds
+            im = np.array(im) # PIL.Image to np.array # TODO avoid
+
+            window_size = (
+                args.binary_image_window_size
+                or
+                get_adaptive_window_size(im.shape)
+            )
+            options = {
+                "window": window_size,
+                "k": args.binary_image_threshold_sensitivity,
+            }
+            algo = binarize_algo_map[args.binary_image_algo]
+
+            # dt is around 0.1 seconds
+            im = doxapy.to_binary(algo, im, options)
+
+            # dt is around 0.0001 seconds
+            im = Image.fromarray(im) # np.array to PIL.Image # TODO avoid
+
+            # surprise: doxapy.to_binary returns im.mode="L" not im.mode="1"
+            assert im.mode == "L", f"im.mode={im.mode}"
+            if im.mode != "1":
+                # convert to depth=1
+                im = im.convert("1", dither=Image.NONE)
+            if 0:
+                # blur after binarize
+                im = im.filter(ImageFilter.GaussianBlur(0.2))
+
         buf = io.BytesIO()
         im_save_kwargs = dict(
-            quality=args.quality,
+            quality=quality,
             lossless=False,
             optimize=True,
         )
-        if args.image_format == "avif":
+        if image_format == "avif":
             im_save_kwargs["format"] = "AVIF"
             # keep full color resolution
             # prevent color bleeding around text
             im_save_kwargs["subsampling"] = "4:4:4"
-            if im.mode == "L": # grayscale
+            if im.mode in ("1", "L"): # binary or grayscale
                 # dont produce broken grayscale avif files
                 # https://issues.chromium.org/issues/362539762
                 im_save_kwargs["subsampling"] = "4:0:0"
             # speed trades off encoding time vs. quality. 0–10. lower is better.
-            im_save_kwargs["speed"] = 0
+            im_save_kwargs["speed"] = image_save_speed
             im_save_kwargs["max_threads"] = args.jobs
-        elif args.image_format == "webp":
+        elif image_format == "webp":
             im_save_kwargs["format"] = "WEBP"
             im_save_kwargs["method"] = WEBP_METHOD
+        elif image_format == "png":
+            im_save_kwargs["format"] = "PNG"
+            # quality has no effect
+            if "quality" in im_save_kwargs:
+                del im_save_kwargs["quality"]
+        elif image_format in ("jpg", "jpeg"):
+            im_save_kwargs["format"] = "JPEG"
+        elif image_format == "group4.tiff":
+            # Group4 compression in TIFF format
+            # Group4 is 120 times faster than AVIF with speed=6
+            im_save_kwargs["format"] = "TIFF"
+            im_save_kwargs["compression"] = "group4"
+            # produce a single strip
+            strip_size = math.ceil(im.width / 8) * im.height
+            im_save_kwargs["strip_size"] = strip_size
+            del im_save_kwargs["quality"]
         else:
-            raise ValueError(f"unknown image format {args.image_format!r}")
+            # raise ValueError(f"unknown image format {image_format!r}")
+            im_save_kwargs["format"] = image_format.upper()
+
+        # t1 = time.time()
+        # this takes by far the most CPU time
         im.save(buf, **im_save_kwargs)
+        # print(f"im.save took {time.time() - t1} seconds")
+
         img_data = buf.getvalue()
         del buf
         with open(cached_page_image_path, "wb") as f:
@@ -223,7 +432,7 @@ def process_page(hocrfile, args):
             bbox = (x1, y1, x2, y2)
             return bbox
 
-    epub_page_image_path = f"images/{page_base}.{args.image_format}"
+    epub_page_image_path = f"images/{page_base}.{image_format}"
     if page_image_path is None:
         epub_page_image_path = None
         img_path = None
@@ -246,7 +455,7 @@ def process_page(hocrfile, args):
     del page
 
     svg_path = f"OEBPS/{page_base}.{args.text_format}"
-    img_path = f"OEBPS/images/{page_base}.{args.image_format}"
+    img_path = f"OEBPS/images/{page_base}.{image_format}"
 
     # --- return file paths & data ---
     return (svg_path, svg_data, img_path, img_data)
@@ -564,6 +773,9 @@ def get_text_data_xhtml(
 
     paragraph_space_width = paragraph_font_size / h_char * w_char
 
+    # TODO implement zoom in javascript and CSS `transform: scale(...)`
+    # html_buf.write('div.page { transform: scale(0.5); transform-origin: top center; }\n')
+
     html_buf.write('</style>\n')
 
     if args.text_html_relative_word_positions_dynamic_font_width:
@@ -638,6 +850,7 @@ def get_text_data_xhtml(
 
     # img.page
     if epub_page_image_path:
+        # TODO why no background image
         # fix: darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
         html_buf.write(f'<img class="page" alt="" src="{epub_page_image_path}" style="width: {page_w}px; height: {page_h}px"/>\n')
 
@@ -721,6 +934,8 @@ def get_text_data_xhtml(
                             # so the next line's first word has top:0px
                             # note: word positions are relative to their paragraph
                             # so we dont need to change the font-size of other <br/>
+                            # TODO? use margin-bottom to avoid changing the line-height
+                            # to get prettier text-selection highlight in chrome
                             next_line = paragraph["lines"][line_idx + 1]
                             this_line_y1 = scale_bbox(line["words"][0]["bbox"])[1]
                             next_line_y1 = scale_bbox(next_line["words"][0]["bbox"])[1]
@@ -994,6 +1209,105 @@ def to_utc_string(dt_str: str) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+class PageFilter:
+    # condition types
+    LE = 0
+    GE = 1
+    RANGE = 2
+    EQ = 3
+
+    # modes
+    MODE_CUSTOM = 0
+    MODE_NONE = 1
+    MODE_ALL = 2
+
+    def __init__(self, spec: str):
+        spec = spec.strip()
+
+        self.mode = self.MODE_CUSTOM
+        self.conditions = []
+
+        if not spec or spec == "none":
+            self.mode = self.MODE_NONE
+            return
+
+        if spec == "all":
+            self.mode = self.MODE_ALL
+            return
+
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+
+            if "-" in part:
+                if part.startswith("-") and part != "-":
+                    end = int(part[1:])
+                    self.conditions.append((self.LE, end))
+
+                elif part.endswith("-"):
+                    start = int(part[:-1])
+                    self.conditions.append((self.GE, start))
+
+                else:
+                    start, end = part.split("-", 1)
+                    start = int(start)
+                    end = int(end)
+                    if start > end:
+                        raise ValueError(f"Invalid range: {part}")
+                    self.conditions.append((self.RANGE, start, end))
+
+            else:
+                value = int(part)
+                self.conditions.append((self.EQ, value))
+
+    def __call__(self, page: int) -> bool:
+        if self.mode == self.MODE_NONE:
+            return False
+
+        if self.mode == self.MODE_ALL:
+            return True
+
+        for cond in self.conditions:
+            kind = cond[0]
+
+            if kind == self.LE:
+                if page <= cond[1]:
+                    return True
+
+            elif kind == self.GE:
+                if page >= cond[1]:
+                    return True
+
+            elif kind == self.RANGE:
+                if cond[1] <= page <= cond[2]:
+                    return True
+
+            else:  # self.EQ
+                if page == cond[1]:
+                    return True
+
+        return False
+
+
+def make_filter_page(spec: str):
+    return PageFilter(spec)
+
+
+def get_image_format(page_num, args):
+    if args.filter_grayscale_page(page_num):
+        return args.grayscale_image_format
+    if args.filter_color_page(page_num):
+        return args.color_image_format
+    # binary page
+    return args.binary_image_format
+
+
+def image_format_is_multi_threaded(image_format):
+    # the avif encoder is multi-threaded already
+    return image_format in ("avif",)
+
+
 # --- main processor ---
 def process_files_hocr2epubfxl(args):
     # separate HOCR + images
@@ -1010,17 +1324,26 @@ def process_files_hocr2epubfxl(args):
         raise ValueError("Mismatch: HOCR files and images count differ")
 
     if args.pages != "all":
-        m = re.fullmatch("([0-9]*)-([0-9]*)", args.pages)
-        if not m:
-            raise ValueError(f"failed to parse args.pages {args.pages!r}")
-        min_page, max_page = m.groups()
-        if min_page == "": min_page = 1
-        if max_page == "": max_page = len(hocrfiles)
-        min_page = int(min_page)
-        max_page = int(max_page)
-        hocrfiles = hocrfiles[(min_page - 1):max_page]
+        filter_page = make_filter_page(args.pages)
+        def filter_hocrfile(hocrfile):
+            page_base = get_page_base(hocrfile)
+            page_num = int(page_base)
+            return filter_page(page_num)
         if imgfiles:
-            imgfiles = imgfiles[(min_page - 1):max_page]
+            hocrfiles_2 = []
+            imgfiles_2 = []
+            for idx, hocrfile in enumerate(hocrfiles):
+                if filter_hocrfile(hocrfile):
+                    hocrfiles_2.append(hocrfile)
+                    imgfiles_2.append(imgfiles[idx])
+            hocrfiles = hocrfiles_2
+            imgfiles = imgfiles_2
+        else:
+            hocrfiles = list(filter(filter_hocrfile, hocrfiles))
+
+    # default: binary pages
+    args.filter_grayscale_page = make_filter_page(args.grayscale_image_pages)
+    args.filter_color_page = make_filter_page(args.color_image_pages)
 
     ZipFileWriter = zipfile.ZipFile
 
@@ -1055,7 +1378,9 @@ def process_files_hocr2epubfxl(args):
             # properties='scripted': the item file contains <script>
             manifest_items.append(f"<item id='page{i+1}' href='{base}.{args.text_format}' media-type='{text_media_type}' properties='scripted'/>")
             spine_items.append(f"<itemref idref='page{i+1}'/>")
-            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{args.image_format}' media-type='image/{args.image_format}'/>")
+            page_num = int(base)
+            image_format = get_image_format(page_num, args)
+            manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{image_format}' media-type='image/{image_format}'/>")
         if args.append_pages:
             # append pages to manifest
             page_num = len(page_filename_list)
@@ -1283,10 +1608,13 @@ def process_files_hocr2epubfxl(args):
         svg_path_list = []
         svg_data_list = []
         max_workers = args.jobs
-        if args.image_format == "avif":
-            # the avif encoder is multi-threaded already
-            max_workers = 1
-        if max_workers == 1:
+
+        # FIXME handle multiple different image formats
+        # maybe cluster pages by image_format_is_multi_threaded
+        image_format = args.binary_image_format
+
+        # TODO run tqdm in a separate thread to get more frequent updates
+        if args.jobs == 1 or image_format_is_multi_threaded(image_format):
             with (
                     tqdm(total=len(hocrfiles), unit="p", ncols=80) as progress_bar,
                 ):
@@ -1384,6 +1712,9 @@ def process_files_hocr2epubfxl(args):
             canonical_url = urllib.parse.urljoin(args.canonical_url_base, "OEBPS/allpages.xhtml")
             canonical_url = urllib.parse.quote(canonical_url, safe=":/?&+")
             html_buf.write(b'<link rel="canonical" href="' + canonical_url.encode("utf8") + b'"/>\n')
+
+        # TODO why?
+        # html_buf.write(b'<meta name="viewport" content="width=device-width, initial-scale=1">\n')
 
         # TODO refactor html style
         html_buf.write(b'<style type="text/css">\n')
@@ -1622,6 +1953,7 @@ def nav_xhtml_write_toc_list_md(html_buf, args, page_basenames):
             try:
                 page_href = page_href_of_page_num[page_num]
             except IndexError as exc:
+                # pass # debug
                 raise ValueError(f"TOC item has no page. page_num={page_num} chapter_title={chapter_title!r}")
             chapter_link = f'<a href="{page_href}">{chapter_title} <span class="pagenum">{page_num}</span></a>'
 
@@ -1680,6 +2012,26 @@ def nav_xhtml_write_toc_list_md(html_buf, args, page_basenames):
     return html_buf.getvalue()
 
 
+def get_adaptive_window_size(image_shape):
+    """
+    Calculate adaptive window size for Sauvola binarization.
+    Window size is roughly 1/40th of the smaller image dimension,
+    must be odd, and is bounded between 31 and 101 pixels.
+    """
+    min_dimension = min(image_shape)
+    # Calculate base window size as 1/40th of smaller dimension
+    window_size = min_dimension // 40
+    
+    # Ensure window size is odd
+    if window_size % 2 == 0:
+        window_size += 1
+    
+    # Bound between 31 and 101
+    window_size = max(31, min(101, window_size))
+    
+    return window_size
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HOCR to EPUB-FXL')
     parser.add_argument(
@@ -1707,17 +2059,60 @@ if __name__ == '__main__':
     parser.add_argument(
         '-s',
         '--scale', # args.scale
-        help='scale factor for the page images. default: 1. example: 0.5',
-        default=1.0,
+        help='scale factor for the page images. default: 1. example: 0.5. note: downscaling can reduce visual quality',
+        default=1,
         type=float,
     )
+
     parser.add_argument(
-        '-q',
-        '--quality', # args.quality
-        help=f'compression quality in percent for the page images. default: {DEFAULT_QUALITY}. example: 5',
-        default=DEFAULT_QUALITY,
+        "--scale-resample", # args.scale_resample
+        default="nearest",
+        choices=["nearest", "bilinear", "lanczos"],
+        help="scale resampling algorithm",
+    )
+
+    parser.add_argument(
+        '--binary-image-quality', # args.binary_image_quality
+        help=f'compression quality in percent for the page images. default: {DEFAULT_BINARY_IMAGE_QUALITY}. example: 5',
+        default=DEFAULT_BINARY_IMAGE_QUALITY,
         type=int,
     )
+
+    parser.add_argument(
+        '--grayscale-image-quality', # args.grayscale_image_quality
+        help=f'compression quality in percent for grayscale pages. default: {DEFAULT_GRAYSCALE_IMAGE_QUALITY}',
+        default=DEFAULT_GRAYSCALE_IMAGE_QUALITY,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--color-image-quality', # args.color_image_quality
+        help=f'compression quality in percent for color pages. default: {DEFAULT_COLOR_IMAGE_QUALITY}',
+        default=DEFAULT_COLOR_IMAGE_QUALITY,
+        type=int,
+    )
+
+    parser.add_argument(
+        "--binary-image-algo", # args.binary_image_algo
+        default=DEFAULT_BINARY_IMAGE_ALGO,
+        choices=["otsu", "niblack", "sauvola", "wolf"],
+        help="image binarization algorithm",
+    )
+
+    parser.add_argument(
+        '--binary-image-threshold-sensitivity', # args.binary_image_threshold_sensitivity
+        help=f'Threshold sensitivity (k value) for Sauvola binarization. Higher values produce darker output. Default: {DEFAULT_BINARY_IMAGE_THRESHOLD_SENSITIVITY}',
+        default=DEFAULT_BINARY_IMAGE_THRESHOLD_SENSITIVITY,
+        type=float,
+    )
+
+    parser.add_argument(
+        '--binary-image-window-size', # args.binary_image_window_size
+        help='Window size for Sauvola binarization. Default: Derived from image size in get_adaptive_window_size',
+        default=0,
+        type=int,
+    )
+
     parser.add_argument(
         '-P',
         '--pages', # args.pages
@@ -1725,6 +2120,21 @@ if __name__ == '__main__':
         default="all",
         type=str,
     )
+
+    parser.add_argument(
+        '--grayscale-image-pages', # args.grayscale_image_pages
+        help='select pages to disable binarization and preserve grayscale. default: none. example: 1-4',
+        default="none",
+        type=str,
+    )
+
+    parser.add_argument(
+        '--color-image-pages', # args.color_image_pages
+        help='select pages to disable binarization and preserve color. default: none. example: 1-4',
+        default="none",
+        type=str,
+    )
+
     parser.add_argument(
         '--append-page',
         dest="append_pages", # args.append_pages
@@ -1744,12 +2154,47 @@ if __name__ == '__main__':
         default=[],
     )
     parser.add_argument(
-        # '-f',
-        '--image-format', # args.image_format
-        help=f'image format for the page images. default: {DEFAULT_IMAGE_FORMAT}. example: webp',
-        default=DEFAULT_IMAGE_FORMAT,
+        '--binary-image-format', # args.binary_image_format
+        help=f'image format for binary page images. default: {DEFAULT_BINARY_IMAGE_FORMAT}. example: webp',
+        default=DEFAULT_BINARY_IMAGE_FORMAT,
         type=str,
     )
+
+    parser.add_argument(
+        '--grayscale-image-format', # args.grayscale_image_format
+        help=f'image format for grayscale page images. default: {DEFAULT_GRAYSCALE_IMAGE_FORMAT}. example: webp',
+        default=DEFAULT_GRAYSCALE_IMAGE_FORMAT,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--color-image-format', # args.color_image_format
+        help=f'image format for color page images. default: {DEFAULT_COLOR_IMAGE_FORMAT}. example: webp',
+        default=DEFAULT_COLOR_IMAGE_FORMAT,
+        type=str,
+    )
+
+    parser.add_argument(
+        '--binary-image-save-speed', # args.binary_image_save_speed
+        help=f'speed between 0 and 9. default {DEFAULT_BINARY_IMAGE_SAVE_SPEED}. lower is better, but there are exceptions like 7',
+        default=DEFAULT_BINARY_IMAGE_SAVE_SPEED,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--grayscale-image-save-speed', # args.grayscale_image_save_speed
+        help=f'speed between 0 and 9. default {DEFAULT_GRAYSCALE_IMAGE_SAVE_SPEED}. lower is better, but there are exceptions',
+        default=DEFAULT_GRAYSCALE_IMAGE_SAVE_SPEED,
+        type=int,
+    )
+
+    parser.add_argument(
+        '--color-image-save-speed', # args.color_image_save_speed
+        help=f'speed between 0 and 9. default {DEFAULT_COLOR_IMAGE_SAVE_SPEED}. lower is better, but there are exceptions',
+        default=DEFAULT_COLOR_IMAGE_SAVE_SPEED,
+        type=int,
+    )
+
     parser.add_argument(
         # '-f',
         '--text-format', # args.text_format
@@ -2017,12 +2462,33 @@ if __name__ == '__main__':
         action='append', # multiple values
     )
 
+    # TODO
+    # parser.add_argument(
+    #     '--inverse', # args.inverse
+    #     help='convert EPUB-FXL to HOCR',
+    #     action='store_true',
+    # )
+
     parser.add_argument(
         '--canonical-url-base', # args.canonical_url_base
         help=f'canonical URL of the root directory path',
         default="",
         type=str,
     )
+
+    parser.add_argument(
+        '--ignore-cached-images', # args.ignore_cached_images
+        action='store_true',
+    )
+
+    # no. cropping the images before compression distorts benchmarks
+    # parser.add_argument(
+    #     '--crop-pages', # args.crop_pages
+    #     type=str,
+    #     # same format as "magick -crop"
+    #     help='process only a part of each page. format: WxH+L+T. example: 200x100+40+20',
+    # )
+
     parser.add_argument(
         '--jobs', # args.jobs
         help=f'run N jobs in parallel. default: {default_max_workers}. max: {max_max_workers}',
@@ -2039,8 +2505,18 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     assert 0.01 <= args.scale <= 100
-    assert 1 <= args.quality <= 100
-    assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
+    if args.scale == int(args.scale):
+        args.scale = int(args.scale)
+    assert 1 <= args.grayscale_image_quality <= 100
+    assert 1 <= args.color_image_quality <= 100
+    assert 0 <= args.binary_image_save_speed <= 9
+    assert 0 <= args.grayscale_image_save_speed <= 9
+    assert 0 <= args.color_image_save_speed <= 9
+    # assert re.match(r"^(\d+)x(\d+)\+(\d+)\+(\d+)$", args.crop_pages)
+    # print("PIL.features.codecs", PIL.features.codecs)
+    # print("PIL.features.features", PIL.features.features)
+    # FIXME this fails for args.image_format == "png"
+    # assert PIL.features.check(args.image_format), f"PIL does not support args.image_format {args.image_format!r}"
     if args.text_format == "html":
         args.text_format = "xhtml"
     assert args.text_format in TEXT_FORMAT_LIST
