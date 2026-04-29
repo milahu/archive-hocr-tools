@@ -580,6 +580,7 @@ def get_text_data_xhtml(
     ):
 
     page_base = get_page_base(hocrfile)
+    page_num = int(page_base)
 
     # --- build XHTML5 ---
     html_buf = io.StringIO()
@@ -601,7 +602,7 @@ def get_text_data_xhtml(
     html_buf.write(f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">\n')
     html_buf.write('<head>\n')
     # set metadata: title
-    html_buf.write(f'<title>{escape(args.doc_title)} ({page_base})</title>\n')
+    html_buf.write(f'<title>{escape(args.doc_title)} (page {page_num})</title>\n')
     html_buf.write(f'<meta name="generator" content="hocr-to-epub-fxl" />\n')
 
     if args.canonical_url_base:
