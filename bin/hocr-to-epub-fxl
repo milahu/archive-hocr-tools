@@ -2237,12 +2237,24 @@ if __name__ == '__main__':
         action='store_true',
     )
 
+    parser.add_argument(
+        '--text-html-relative-word-positions', # args.text_html_relative_word_positions
+        help=(
+            'use relative word positions in html.'
+            ' con: this gives wrong word positions in some browsers.'
+            ' pro: this enables text search across words.'
+        ),
+        action='store_true',
+    )
+
     # parser.add_argument(
-    #     '--text-html-relative-word-positions', # args.text_html_relative_word_positions
+    #     '--text-html-absolute-word-positions', # args.text_html_absolute_word_positions
     #     help=(
-    #         'use relative word positions in html.'
-    #         ' con: this gives wrong word positions in some browsers.'
-    #         ' pro: this enables text search across words.'
+    #         'use absolute word positions in html.'
+    #         ' pro: this gives correct word positions in all browsers.'
+    #         # https://groups.google.com/a/chromium.org/g/chromium-discuss/c/KBT__5UhptE
+    #         # searching text in HTML spans with absolute positions
+    #         ' con: this breaks text search across words.'
     #     ),
     #     action='store_true',
     # )
@@ -2250,18 +2262,6 @@ if __name__ == '__main__':
     parser.add_argument(
         '--text-html-force-word-spacing', # args.text_html_force_word_spacing
         help=f'append &nbsp; after each word. useful with text-html-absolute-word-positions',
-        action='store_true',
-    )
-
-    parser.add_argument(
-        '--text-html-absolute-word-positions', # args.text_html_absolute_word_positions
-        help=(
-            'use absolute word positions in html.'
-            ' pro: this gives correct word positions in all browsers.'
-            # https://groups.google.com/a/chromium.org/g/chromium-discuss/c/KBT__5UhptE
-            # searching text in HTML spans with absolute positions
-            ' con: this breaks text search across words.'
-        ),
         action='store_true',
     )
 
@@ -2567,8 +2567,8 @@ if __name__ == '__main__':
         if not args.canonical_url_base.endswith("/"):
             args.canonical_url_base += "/"
 
-    # args.text_html_absolute_word_positions = not args.text_html_relative_word_positions
-    args.text_html_relative_word_positions = not args.text_html_absolute_word_positions
+    args.text_html_absolute_word_positions = not args.text_html_relative_word_positions
+    # args.text_html_relative_word_positions = not args.text_html_absolute_word_positions
 
     if not args.text_html_relative_word_positions:
         args.text_html_relative_word_positions_dynamic_font_width = False
