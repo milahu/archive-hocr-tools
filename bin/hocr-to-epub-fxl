@@ -419,9 +419,19 @@ def process_page(hocrfile, args):
         im.close()
         del im
 
+    # TODO? cleanup more float values
+    def cleanup_bbox(bbox):
+        bbox = list(bbox)
+        for idx, val in enumerate(bbox):
+            if int(val) == val:
+                val = int(val)
+            bbox[idx] = val
+        bbox = tuple(bbox)
+        return bbox
+
     if args.scale == 1:
         def scale_bbox(bbox):
-            return bbox # noop
+            return cleanup_bbox(bbox) # noop
     else:
         def scale_bbox(bbox):
             x1, y1, x2, y2 = bbox
@@ -430,7 +440,7 @@ def process_page(hocrfile, args):
             y1 = y1 * args.scale
             y2 = y2 * args.scale
             bbox = (x1, y1, x2, y2)
-            return bbox
+            return cleanup_bbox(bbox)
 
     epub_page_image_path = f"images/{page_base}.{image_format}"
     if page_image_path is None:
