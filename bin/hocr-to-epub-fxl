@@ -846,6 +846,19 @@ def get_text_data_xhtml(
         html_buf.write('// ]]>\n')
         html_buf.write("</script>\n")
 
+    if not args.text_html_relative_word_positions:
+        html_buf.write('<script type="application/javascript" class="pragma-once">\n')
+        html_buf.write('// <![CDATA[\n')
+        # define function makeRelativeSpans
+        makeRelativeSpans_js_str = importlib.resources.read_text("hocr", "data/makeRelativeSpans.min.js")
+        html_buf.write(makeRelativeSpans_js_str + "\n")
+        # TODO expose the parameters joinLines and addSoftHyphens to the GUI
+        html_buf.write("let joinLines = 1;\n")
+        html_buf.write("let addSoftHyphens = 1;\n")
+        html_buf.write("document.addEventListener('DOMContentLoaded', () => makeRelativeSpans(joinLines, addSoftHyphens));\n")
+        html_buf.write('// ]]>\n')
+        html_buf.write("</script>\n")
+
     html_buf.write('</head>\n')
     html_buf.write('<body>\n')
     html_buf.write(f'<div class="page" id="page-{page_base}" style="width: {page_w}px; height: {page_h}px">\n')
@@ -1812,6 +1825,9 @@ def process_files_hocr2epubfxl(args):
             # if svg_data.startswith(xml_header):
             #     svg_data = svg_data[len(xml_header):]
             svg_data = re.sub(rb".*<body>\n(.*)</body>.*", rb"\1", svg_data, flags=re.DOTALL)
+            if svg_idx > 0:
+                pattern = rb'<script type="application/javascript" class="pragma-once">.*?</script>'
+                svg_data = re.sub(pattern, b"", svg_data, flags=re.DOTALL)
             html_buf.write(svg_data)
         # append pages to joined html file
         for page_idx, page_path in enumerate(appended_page_path_list):
