@@ -833,10 +833,11 @@ def get_text_data_xhtml(
         # undo: add space between words in clipboard text
         # TODO do this for more browsers?
         html_buf.write("  if (globalThis._userAgentIsFirefox) {\n")
-        html_buf.write("    console.log('removing &nbsp; after words to fix clipboard text');\n")
+        # NOTE &#160; in XHTML = &nbsp; in HTML
+        html_buf.write("    console.log('removing &#160; after words to fix clipboard text');\n")
         html_buf.write("    for (const span of document.querySelectorAll('span')) {\n")
         # some spans end with "<br/>"
-        html_buf.write("      if (span.innerHTML.slice(-6) != '&nbsp;') continue;\n")
+        html_buf.write("      if (span.innerHTML.slice(-6) != '&#160;') continue;\n")
         html_buf.write("      span.innerHTML = span.innerHTML.slice(0, -6);\n")
         html_buf.write("    }\n")
         html_buf.write("  }\n")
@@ -924,7 +925,8 @@ def get_text_data_xhtml(
                             # this is removed for some browsers in DOMContentLoaded
                             # here we err on the side of "too many spaces"
                             # when javascript is disabled
-                            text += "&nbsp;"
+                            # NOTE &#160; in XHTML = &nbsp; in HTML
+                            text += "&#160;"
 
                 if word_idx == last_word_idx: # last word in line
                     if not args.text_html_join_lines:
