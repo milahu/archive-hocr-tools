@@ -2125,7 +2125,7 @@ if __name__ == '__main__':
         "--binary-image-algo", # args.binary_image_algo
         default=DEFAULT_BINARY_IMAGE_ALGO,
         choices=["otsu", "niblack", "sauvola", "wolf"],
-        help="image binarization algorithm",
+        help=f'image binarization algorithm. default: {DEFAULT_BINARY_IMAGE_ALGO}',
     )
 
     parser.add_argument(
