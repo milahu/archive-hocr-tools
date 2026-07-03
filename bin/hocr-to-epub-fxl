@@ -496,15 +496,20 @@ def process_page(hocrfile, args):
         "svg": get_text_data_svg,
     }
     get_text_data = get_text_data_by_text_format[args.text_format]
-    svg_data = get_text_data(
-        hocrfile,
-        page,
-        page_w,
-        page_h,
-        scale_bbox,
-        epub_page_image_path,
-        args,
-    )
+    try:
+        svg_data = get_text_data(
+            hocrfile,
+            page,
+            page_w,
+            page_h,
+            scale_bbox,
+            epub_page_image_path,
+            args,
+        )
+    except Exception as exc:
+        print()
+        print(f"failed to process hocrfile: {hocrfile}")
+        raise
     del page
 
     svg_path = f"OEBPS/{page_base}.{args.text_format}"
