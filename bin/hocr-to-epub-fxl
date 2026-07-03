@@ -204,6 +204,39 @@ binarize_algo_map = {
 default_max_workers = psutil.cpu_count(logical=False) or 1
 max_max_workers = psutil.cpu_count() or 1 # number of CPU threads
 
+
+# --- Helper: level adjustment (contrast stretch) -----------------------------
+def apply_color_levels(img: np.ndarray|Image.Image, low: float = 0.2, high: float = 0.9) -> np.ndarray:
+    """
+    Apply a linear color level adjustment using fractional thresholds.
+    low/high are in [0,1], e.g., 0.2 = 20%, 0.9 = 90%.
+    """
+    was_pil_image = False
+    if isinstance(img, Image.Image):
+        was_pil_image = True
+        img = np.array(img) # PIL.Image to np.array # TODO avoid
+    if img.dtype == np.uint8:
+        max_val = 255
+    elif img.dtype == np.uint16:
+        max_val = 65535
+    else:
+        raise ValueError(f"Unsupported image dtype: {img.dtype}")
+
+    # Convert fractional thresholds to absolute values
+    low_val = low * max_val
+    high_val = high * max_val
+
+    if high_val <= low_val:
+        return img.copy()
+
+    img_stretched = (img.astype(float) - low_val) * (max_val / (high_val - low_val))
+    img_stretched = np.clip(img_stretched, 0, max_val)
+    img_stretched = img_stretched.astype(img.dtype)
+    if was_pil_image:
+        img_stretched = Image.fromarray(img_stretched) # np.array to PIL.Image # TODO avoid
+    return img_stretched
+
+
 # --- top-level page processor ---
 def process_page(hocrfile, args):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
@@ -274,6 +307,7 @@ def process_page(hocrfile, args):
         f"q{quality}",
         f"d{depth}",
         f"s{args.scale}",
+        f"cl{args.image_color_levels or '0x100'}",
         f"sp{image_save_speed}",
         f"sen{args.binary_image_threshold_sensitivity}",
         f"win{args.binary_image_window_size}",
@@ -316,6 +350,15 @@ def process_page(hocrfile, args):
             page_h = round(page_h * args.scale)
             resample = resample_map.get(args.scale_resample)
             im = im.resize((page_w, page_h), resample=resample)
+
+        if args.image_color_levels and args.image_color_levels != "0x100":
+            low_threshold, high_threshold = args.image_color_levels.split("x")
+            low_threshold = float(low_threshold) / 100
+            high_threshold = float(high_threshold) / 100
+            assert 0 <= low_threshold <= 1
+            assert 0 <= high_threshold <= 1
+            assert low_threshold < high_threshold
+            im = apply_color_levels(im, low_threshold, high_threshold)
 
         if args.filter_binary_page(page_num):
             # binarize
@@ -2098,6 +2141,13 @@ if __name__ == '__main__':
         default="nearest",
         choices=["nearest", "bilinear", "lanczos"],
         help="scale resampling algorithm",
+    )
+
+    parser.add_argument(
+        '--image-color-levels', # args.image_color_levels
+        help='adjust image color levels to increase contrast. format: {low_threshold}x{high_threshold}. default: 0x100. example: 20x80',
+        default=None,
+        type=str,
     )
 
     parser.add_argument(
