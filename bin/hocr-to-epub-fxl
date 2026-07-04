@@ -120,9 +120,11 @@ for (( q=10; q<=30; q++ )); do
         "$dst";
 done
 '''
-DEFAULT_BINARY_IMAGE_FORMAT = "avif"
-DEFAULT_GRAYSCALE_IMAGE_FORMAT = "avif"
-DEFAULT_COLOR_IMAGE_FORMAT = "avif"
+
+DEFAULT_IMAGE_FORMAT = "avif"
+# DEFAULT_BINARY_IMAGE_FORMAT = "avif"
+# DEFAULT_GRAYSCALE_IMAGE_FORMAT = "avif"
+# DEFAULT_COLOR_IMAGE_FORMAT = "avif"
 
 # TODO do your own benchmarking and tuning
 # note: smaller image file size can have worse visual quality
@@ -2237,24 +2239,33 @@ if __name__ == '__main__':
         type=str,
         default=[],
     )
+
+    parser.add_argument(
+        '--image-format', # args.image_format
+        help=f'image format for all page modes (binary, grayscale, color). default: {DEFAULT_IMAGE_FORMAT}. example: webp',
+        # default=None, # DEFAULT_IMAGE_FORMAT
+        default=DEFAULT_IMAGE_FORMAT,
+        type=str,
+    )
+
     parser.add_argument(
         '--binary-image-format', # args.binary_image_format
-        help=f'image format for binary page images. default: {DEFAULT_BINARY_IMAGE_FORMAT}. example: webp',
-        default=DEFAULT_BINARY_IMAGE_FORMAT,
+        help=f'image format for binary page images. default: image-format',
+        default=None,
         type=str,
     )
 
     parser.add_argument(
         '--grayscale-image-format', # args.grayscale_image_format
-        help=f'image format for grayscale page images. default: {DEFAULT_GRAYSCALE_IMAGE_FORMAT}. example: webp',
-        default=DEFAULT_GRAYSCALE_IMAGE_FORMAT,
+        help=f'image format for grayscale page images. default: image-format',
+        default=None,
         type=str,
     )
 
     parser.add_argument(
         '--color-image-format', # args.color_image_format
-        help=f'image format for color page images. default: {DEFAULT_COLOR_IMAGE_FORMAT}. example: webp',
-        default=DEFAULT_COLOR_IMAGE_FORMAT,
+        help=f'image format for color page images. default: image-format',
+        default=None,
         type=str,
     )
 
@@ -2602,6 +2613,12 @@ if __name__ == '__main__':
     assert 0 <= args.binary_image_save_speed <= 9
     assert 0 <= args.grayscale_image_save_speed <= 9
     assert 0 <= args.color_image_save_speed <= 9
+
+    # args.image_format = args.image_format or DEFAULT_IMAGE_FORMAT
+    args.binary_image_format = args.binary_image_format or args.image_format
+    args.grayscale_image_format = args.grayscale_image_format or args.image_format
+    args.color_image_format = args.color_image_format or args.image_format
+
     # assert re.match(r"^(\d+)x(\d+)\+(\d+)\+(\d+)$", args.crop_pages)
     # print("PIL.features.codecs", PIL.features.codecs)
     # print("PIL.features.features", PIL.features.features)
