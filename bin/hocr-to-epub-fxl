@@ -107,6 +107,21 @@ class tqdm(original_tqdm):
 
 hocrfile_extensions = ("hocr", "html", "xhtml")
 
+# no. binary page mode is too lossy.
+# characters can look aliased/jagged
+# After downsampling from 600 dpi to 150 dpi and converting the image to bitonal,
+# glyph contours become aliased,
+# producing one-pixel stair-step artifacts along edges that were originally straight.
+# we cannot use binary/bitonal group4 images in most browsers anyway
+# and we cannot use group4-polyfill over the file protocol
+# DEFAULT_PAGE_MODE = "binary"
+DEFAULT_PAGE_MODE = "grayscale"
+PAGE_MODE_VALUES = (
+    "binary",
+    "grayscale",
+    "color",
+)
+
 # use imagemagick to compare avif qualities around 20%
 r'''
 src=001.tiff;
@@ -244,12 +259,6 @@ def process_page(hocrfile, args):
     """Process a single hOCR page: compress WebP (cached) and build SVG."""
     # assert PIL.features.check(args.image_format), f"PIL does not support image_format {args.image_format!r}"
 
-    # create a local function for this process
-    # fix: pickle cannot serialize this function
-    def filter_binary_page(page_num):
-        return (not args.filter_grayscale_page(page_num)) and (not args.filter_color_page(page_num))
-    args.filter_binary_page = filter_binary_page
-
     # --- parse HOCR ---
     page = None
     page_w, page_h = None, None
@@ -270,16 +279,19 @@ def process_page(hocrfile, args):
 
     page_num = int(page_base)
 
-    if args.filter_grayscale_page(page_num) and args.filter_color_page(page_num):
-        raise ValueError(f"both grayscale-page and color-page match page number {page_num}")
+    page_mode = get_page_mode(page_num, args)
 
-    if args.filter_grayscale_page(page_num):
+    is_binary_page = (page_mode == "binary")
+    is_grayscale_page = (page_mode == "grayscale")
+    is_color_page = (page_mode == "color")
+
+    if is_grayscale_page:
         image_format = args.grayscale_image_format
         image_save_speed = args.grayscale_image_save_speed
         quality = args.grayscale_image_quality
         depth = 8
         image_mode = "L"
-    elif args.filter_color_page(page_num):
+    elif is_color_page:
         image_format = args.color_image_format
         image_save_speed = args.color_image_save_speed
         quality = args.color_image_quality
@@ -342,7 +354,7 @@ def process_page(hocrfile, args):
         #     lower = upper + height # y2
         #     im = im.crop((left, upper, right, lower)) # x1, y1, x2, y2
         page_w, page_h = im.size
-        if not args.filter_color_page(page_num):
+        if not is_color_page:
             # grayscale or binarized
             if im.mode not in ("1", "L"):
                 im = im.convert("L")
@@ -362,7 +374,7 @@ def process_page(hocrfile, args):
             assert low_threshold < high_threshold
             im = apply_color_levels(im, low_threshold, high_threshold)
 
-        if args.filter_binary_page(page_num):
+        if is_binary_page:
             # binarize
             if 0:
                 # no, this is too lossy
@@ -1370,10 +1382,31 @@ def make_filter_page(spec: str):
     return PageFilter(spec)
 
 
-def get_image_format(page_num, args):
+def get_page_mode(page_num, args):
+    # TODO return enum? BINARY_PAGE, GRAYSCALE_PAGE, COLOR_PAGE
+    modes = []
+    if args.filter_binary_page(page_num):
+        modes.append("binary")
     if args.filter_grayscale_page(page_num):
-        return args.grayscale_image_format
+        modes.append("grayscale")
     if args.filter_color_page(page_num):
+        modes.append("color")
+    if len(modes) == 0:
+        return args.page_mode
+    if len(modes) == 1:
+        return modes[0]
+    # if len(modes) > 1:
+    raise ValueError(f"multiple page modes for page {page}: {modes}")
+
+
+def get_image_format(page_num, args):
+    page_mode = get_page_mode(page_num, args)
+    # is_binary_page = (page_mode == "binary")
+    is_grayscale_page = (page_mode == "grayscale")
+    is_color_page = (page_mode == "color")
+    if is_grayscale_page:
+        return args.grayscale_image_format
+    if is_color_page:
         return args.color_image_format
     # binary page
     return args.binary_image_format
@@ -1417,7 +1450,7 @@ def process_files_hocr2epubfxl(args):
         else:
             hocrfiles = list(filter(filter_hocrfile, hocrfiles))
 
-    # default: binary pages
+    args.filter_binary_page = make_filter_page(args.binary_image_pages)
     args.filter_grayscale_page = make_filter_page(args.grayscale_image_pages)
     args.filter_color_page = make_filter_page(args.color_image_pages)
 
@@ -2208,15 +2241,31 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
+        '--page-mode', # args.page_mode
+        help=f'page mode for all pages. default: {DEFAULT_PAGE_MODE}. values: {PAGE_MODE_VALUES}',
+        default=DEFAULT_PAGE_MODE,
+        type=str,
+    )
+
+    # TODO shorten to --binary-pages etc
+    # TODO rename "binary" to "bitonal"
+    parser.add_argument(
+        '--binary-image-pages', # args.binary_image_pages
+        help='override page-mode to binary for these pages. default: none. example: 1-4',
+        default="none",
+        type=str,
+    )
+
+    parser.add_argument(
         '--grayscale-image-pages', # args.grayscale_image_pages
-        help='select pages to disable binarization and preserve grayscale. default: none. example: 1-4',
+        help='override page-mode to grayscale for these pages. default: none. example: 1-4',
         default="none",
         type=str,
     )
 
     parser.add_argument(
         '--color-image-pages', # args.color_image_pages
-        help='select pages to disable binarization and preserve color. default: none. example: 1-4',
+        help='override page-mode to color for these pages. default: none. example: 1-4',
         default="none",
         type=str,
     )
