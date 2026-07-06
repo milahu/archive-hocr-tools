@@ -931,6 +931,16 @@ def get_text_data_xhtml(
         html_buf.write("let joinLines = 1;\n")
         html_buf.write("let addSoftHyphens = 1;\n")
         html_buf.write("document.addEventListener('DOMContentLoaded', () => makeRelativeSpans(joinLines, addSoftHyphens));\n")
+        # define constants for fitToWidth: pageBase, pageWidth, pageHeight
+        html_buf.write(f'const pageBase="{page_base}",pageWidth={page_w},pageHeight={page_h};\n')
+        if args.debug:
+            # debug: use the non-minified script
+            fitToWidth_js_str = importlib.resources.read_text("hocr", "data/fitToWidth.js")
+        else:
+            fitToWidth_js_str = importlib.resources.read_text("hocr", "data/fitToWidth.min.js")
+        html_buf.write(fitToWidth_js_str)
+        html_buf.write('window.addEventListener("load", fitToWidth);\n')
+        html_buf.write('window.addEventListener("resize", fitToWidth);\n')
         html_buf.write('// ]]>\n')
         html_buf.write("</script>\n")
 
