@@ -723,8 +723,11 @@ def get_text_data_xhtml(
     # FIXME scale to fit width (at 100% browser zoom level)
     # html_buf.write(' outline: solid 10px green;\n') # debug
     html_buf.write(' position: relative;\n')
-    if args.text_html_relative_word_positions:
-        html_buf.write(' overflow: hidden;\n')
+    # makeRelativeSpans transforms absolute to relative word positions
+    # so with both relative and absolute word positions
+    # p elements can overflow the div.page element
+    # and create extra margin on the right side of the page element
+    html_buf.write(' overflow: hidden;\n')
     # no. darkreader: Access to fetch at 'file:///x.avif' from origin 'null' has been blocked by CORS policy
     # if epub_page_image_path:
     #     html_buf.write(f' background: url("{epub_page_image_path}") no-repeat;\n')
