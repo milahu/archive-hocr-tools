@@ -272,7 +272,7 @@ def process_page(hocrfile, args):
         if m := re.search(rb'''<div class='ocr_page'.*?title='image "([^"]+)"''', f.read()):
             page_image_path = os.path.join(os.path.dirname(hocrfile), m.group(1).decode("utf8"))
     if not page_image_path or not os.path.exists(page_image_path):
-        # raise ValueError(f"Missing image for {hocrfile}")
+        raise ValueError(f"Missing page image for {hocrfile}")
         pass
 
     page_base = get_page_base(hocrfile)
