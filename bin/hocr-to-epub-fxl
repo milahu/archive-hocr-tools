@@ -65,6 +65,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import importlib.resources
 import urllib.parse
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -277,7 +278,7 @@ def process_page(hocrfile, args):
 
     page_base = get_page_base(hocrfile)
 
-    page_num = int(page_base)
+    page_num = get_page_num(page_base)
 
     page_mode = get_page_mode(page_num, args)
 
@@ -652,7 +653,7 @@ def get_text_data_xhtml(
     ):
 
     page_base = get_page_base(hocrfile)
-    page_num = int(page_base)
+    page_num = get_page_num(page_base)
 
     # --- build XHTML5 ---
     html_buf = io.StringIO()
@@ -1430,6 +1431,24 @@ def image_format_is_multi_threaded(image_format):
     return image_format in ("avif",)
 
 
+def get_page_num(path):
+    """
+    parse page number from filepath or filename
+
+    "001.jpg" -> 1
+    "001.234.jpg" -> 1
+    "001-234.jpg" -> 1
+    "001x234.jpg" -> 1
+    "001_234.jpg" -> 1
+    """
+    if not isinstance(path, Path):
+        path = Path(path)
+    m = re.match(r"^(\d+)", path.name)
+    page_num = int(m.group(1)) if m else 0
+    # page_num = int(m.group(1)) # can throw
+    return page_num
+
+
 # --- main processor ---
 def process_files_hocr2epubfxl(args):
     # separate HOCR + images
@@ -1449,7 +1468,7 @@ def process_files_hocr2epubfxl(args):
         filter_page = make_filter_page(args.pages)
         def filter_hocrfile(hocrfile):
             page_base = get_page_base(hocrfile)
-            page_num = int(page_base)
+            page_num = get_page_num(page_base)
             return filter_page(page_num)
         if imgfiles:
             hocrfiles_2 = []
@@ -1500,7 +1519,7 @@ def process_files_hocr2epubfxl(args):
             # properties='scripted': the item file contains <script>
             manifest_items.append(f"<item id='page{i+1}' href='{base}.{args.text_format}' media-type='{text_media_type}' properties='scripted'/>")
             spine_items.append(f"<itemref idref='page{i+1}'/>")
-            page_num = int(base)
+            page_num = get_page_num(base)
             image_format = get_image_format(page_num, args)
             manifest_items.append(f"<item id='img{i+1}' href='images/{base}.{image_format}' media-type='image/{image_format}'/>")
         if args.append_pages:
